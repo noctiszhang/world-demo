@@ -22,6 +22,7 @@ export class Character {
   maxHealth = 100;
   alive = true;
   private hurtCooldown = 0;
+  private attackT = 0;
   private rollT = 0;
   private rollCd = 0;
   private rollDir = new THREE.Vector2(0, 1);
@@ -61,14 +62,22 @@ export class Character {
   triggerAttack() {
     if (!this.alive || this.isAttacking || this.isRolling || !this.grounded) return false;
     this.isAttacking = true;
+    this.attackT = 1.05;
     this.animator.play('attack');
     return true;
   }
 
+  /** 翻滚枢轴绕 X 的角度。0 表示没在空翻。 */
+  get rollVisual() {
+    return this.rollPivot.rotation.x;
+  }
+
   triggerRoll(input: Input, camera: THREE.Camera) {
-    if (!this.alive || this.isRolling || this.isAttacking || !this.grounded || this.rollCd > 0) {
+    if (!this.alive || this.isRolling || !this.grounded || this.rollCd > 0) {
       return false;
     }
+    this.isAttacking = false;
+    this.attackT = 0;
     this.computeCamBasis(camera);
     const mf = input.moveForward;
     const ms = input.moveStrafe;
@@ -106,7 +115,6 @@ export class Character {
       this._vx = 0;
       this._vz = 0;
       this.rollPivot.rotation.set(0, 0, 0);
-      this.rollPivot.position.y = 0;
     }
     return true;
   }
@@ -125,15 +133,13 @@ export class Character {
       this.object.position.copy(this.position);
       this.object.rotation.z = THREE.MathUtils.damp(this.object.rotation.z, Math.PI / 2, 6, dt);
       this.rollPivot.rotation.set(0, 0, 0);
-      this.rollPivot.position.y = 0;
       return;
     }
 
     if (this.isRolling) {
       this.rollT -= dt;
       const p = 1 - Math.max(0, this.rollT) / ROLL_DUR;
-      // 绕角色右轴前翻一圈（局部 X），抬离地面。不再叠 jump 片段，避免肢体乱拧。
-      this.rollPivot.position.y = 0.9;
+      // 绕腰（枢轴已在身体中心）前空翻一圈。身体半径约 0.95，hop 让最低点停在地面之上。
       this.rollPivot.rotation.x = p * Math.PI * 2;
       this.rollPivot.rotation.y = 0;
       this.rollPivot.rotation.z = 0;
@@ -148,7 +154,7 @@ export class Character {
       nz = THREE.MathUtils.clamp(nz, -118, 118);
       ({ x: nx, z: nz } = this.resolveColliders(nx, nz, colliders));
       const gh = groundHeight(nx, nz);
-      const hop = Math.sin(p * Math.PI) * 0.7;
+      const hop = Math.sin(p * Math.PI) * 0.9;
       this.position.set(nx, gh + hop, nz);
       this.object.position.copy(this.position);
       this.object.rotation.y = this.facing;
@@ -158,7 +164,6 @@ export class Character {
       if (this.rollT <= 0) {
         this.isRolling = false;
         this.rollPivot.rotation.set(0, 0, 0);
-        this.rollPivot.position.y = 0;
         this.position.y = gh;
         this.object.position.y = gh;
         this.grounded = true;
@@ -170,7 +175,10 @@ export class Character {
     }
 
     this.rollPivot.rotation.x = THREE.MathUtils.damp(this.rollPivot.rotation.x, 0, 16, dt);
-    this.rollPivot.position.y = THREE.MathUtils.damp(this.rollPivot.position.y, 0, 16, dt);
+    if (this.attackT > 0) {
+      this.attackT = Math.max(0, this.attackT - dt);
+      if (this.attackT <= 0) this.isAttacking = false;
+    }
 
     this.computeCamBasis(camera);
     const mf = input.moveForward;

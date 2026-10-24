@@ -69,7 +69,22 @@ async function main() {
   const dMark1 = await page.evaluate(() => window.__GAME__.markerScreenX);
   assert(dMark1 - dMark0 < -0.05, `D 必须往画面右（地标应左移 Δ=${(dMark1 - dMark0).toFixed(3)}）`);
 
-  // --- 3) 攻击朝向 = 面朝（允许极小数值误差）---
+  // 镜头转开后再按 A。地标屏幕 X 变大 = 人往画面左，不依赖游戏自己的 right 向量。
+  await page.mouse.move(700, 360);
+  await page.mouse.down();
+  await page.mouse.move(380, 360, { steps: 10 });
+  await page.mouse.up();
+  await page.waitForTimeout(80);
+  const yawTurned = await page.evaluate(() => window.__GAME__.camera.yaw);
+  const a2m0 = await page.evaluate(() => window.__GAME__.markerScreenX);
+  await page.keyboard.down('KeyA');
+  await page.waitForTimeout(600);
+  await page.keyboard.up('KeyA');
+  const a2m1 = await page.evaluate(() => window.__GAME__.markerScreenX);
+  assert(Math.abs(yawTurned - Math.PI) > 0.7, `鼠标应把镜头转开 (yaw=${yawTurned.toFixed(2)})`);
+  assert(a2m1 - a2m0 > 0.04, `转镜头后 A 仍必须往画面左（地标应右移 Δ=${(a2m1 - a2m0).toFixed(3)}）`);
+
+  // --- 3) 攻击朝向 = 面朝，闪光在身前而不是身侧 ---
   await page.keyboard.up('KeyW');
   await page.keyboard.up('KeyA');
   await page.keyboard.up('KeyD');
@@ -87,8 +102,24 @@ async function main() {
   assert(midAtk.isAttacking === true, 'J 应进入攻击');
   let dFacing = Math.atan2(Math.sin(midAtk.facing - preAtk.facing), Math.cos(midAtk.facing - preAtk.facing));
   assert(Math.abs(dFacing) < 0.2, `攻击不应扭向侧面 (Δfacing=${dFacing.toFixed(3)})`);
+  const slash = await page.evaluate(() => {
+    const p = window.__GAME__.player;
+    const t = window.__GAME__.slashTip;
+    const fx = Math.sin(p.facing);
+    const fz = Math.cos(p.facing);
+    const ax = t.x - p.x;
+    const az = t.z - p.z;
+    return {
+      visible: t.visible,
+      fwd: ax * fx + az * fz,
+      side: ax * Math.cos(p.facing) - az * Math.sin(p.facing),
+    };
+  });
+  assert(slash.visible === true, '攻击闪光应可见');
+  assert(slash.fwd > 0.8, `闪光必须在面朝前方 (fwd=${slash.fwd.toFixed(2)})`);
+  assert(Math.abs(slash.side) < 0.35, `闪光不能偏到身体侧面 (side=${slash.side.toFixed(2)})`);
 
-  // 等攻击结束再测翻滚（攻击中禁止滚）
+  // 等攻击结束再测翻滚
   for (let i = 0; i < 40; i++) {
     const atk = await page.evaluate(() => window.__GAME__.player.isAttacking);
     if (!atk) break;
@@ -107,17 +138,20 @@ async function main() {
   let sawRoll = false;
   let minY = y0;
   let maxY = y0;
+  let maxRoll = 0;
   for (let i = 0; i < 20; i++) {
     await page.waitForTimeout(40);
     const st = await page.evaluate(() => ({ ...window.__GAME__.player }));
     if (st.isRolling) sawRoll = true;
     if (st.y < minY) minY = st.y;
     if (st.y > maxY) maxY = st.y;
+    if (Math.abs(st.rollVisual) > maxRoll) maxRoll = Math.abs(st.rollVisual);
   }
   await page.keyboard.up('KeyW');
   assert(sawRoll, '按下 K 后应进入翻滚状态');
   assert(minY > y0 - 0.25, `翻滚不应明显入地 (y0=${y0.toFixed(2)} minY=${minY.toFixed(2)})`);
-  assert(maxY >= y0 + 0.2, `翻滚应 hop 离地 (maxY=${maxY.toFixed(2)})`);
+  assert(maxY >= y0 + 0.45, `翻滚应明显离地 (maxY=${maxY.toFixed(2)})`);
+  assert(maxRoll > 2, `翻滚应绕腰空翻而不是只平移 (roll=${maxRoll.toFixed(2)})`);
   await page.waitForFunction(() => !window.__GAME__.player.isRolling, null, { timeout: 2000 });
   assert(true, '翻滚应在结束后退出');
 

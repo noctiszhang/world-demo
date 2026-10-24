@@ -66,8 +66,9 @@ loader.load(
     // model(脚底) → rollPivot(翻滚绕骨盆) → inner(骨架)
     const rollPivot = new THREE.Group();
     rollPivot.name = 'rollPivot';
+    // 网格以自身中心为原点，上下各约 0.95。枢轴放在身体中心，脚才贴地，翻滚也绕腰而不是绕脚。
+    rollPivot.position.y = 0.95;
     const inner = new THREE.Group();
-    inner.position.y = 0.95; // 静止时脚底对齐；翻滚时 rollPivot.y 抬起
     model.traverse((o) => {
       const mesh = o as THREE.Mesh;
       if (mesh.isMesh) {
@@ -149,22 +150,26 @@ function start(model: THREE.Object3D, rollPivot: THREE.Object3D, animator: Anima
   deadEl.innerHTML = '你倒下了<br/><span style="font-size:14px;opacity:.85">刷新页面重来</span>';
   document.body.appendChild(deadEl);
 
-  // ---------- 攻击弧光 ----------
-  const slashGeo = new THREE.RingGeometry(0.55, 1.35, 24, 1, -0.6, 1.5);
+  // 水平月牙，弧心在本地 +Z（正前方）。左右端点对称，从背后也能看见，不会只亮在身体一侧。
   const slashMat = new THREE.MeshBasicMaterial({
-    color: 0xffe08a,
+    color: 0xffd24a,
     transparent: true,
     opacity: 0,
     side: THREE.DoubleSide,
     depthWrite: false,
-    blending: THREE.AdditiveBlending,
   });
-  const slash = new THREE.Mesh(slashGeo, slashMat);
-  // 挂在角色本地 +Z（面朝）前方，避免世界坐标把弧光拧到侧面
-  slash.position.set(0, 1.05, 1.25);
+  const slash = new THREE.Mesh(
+    new THREE.RingGeometry(0.75, 1.45, 28, 1, -Math.PI / 2 - 1.15, 2.3),
+    slashMat,
+  );
   slash.rotation.x = -Math.PI / 2;
+  slash.position.set(0, 1.2, 0.15);
+  slash.renderOrder = 10;
   slash.visible = false;
   model.add(slash);
+  // 弧中点：theta=-π/2，半径约 1.1，在网格局部是 (0, -1.1, 0)，转到世界后沿 +Z
+  const slashTipLocal = new THREE.Vector3(0, -1.1, 0);
+  const slashTipWorld = new THREE.Vector3();
   let slashLife = 0;
 
   // ---------- 怪物 ----------
@@ -208,7 +213,7 @@ function start(model: THREE.Object3D, rollPivot: THREE.Object3D, animator: Anima
     if (input.attackPressed && character.alive) {
       if (character.triggerAttack()) {
         attackHitDone = false;
-        slashLife = 0.35;
+        slashLife = 0.6;
         slash.visible = true;
         slashMat.opacity = 0.85;
       }
@@ -293,7 +298,7 @@ function start(model: THREE.Object3D, rollPivot: THREE.Object3D, animator: Anima
     if (slashLife > 0) {
       slashLife -= dt;
       slash.visible = true;
-      slashMat.opacity = Math.max(0, slashLife / 0.35) * 0.85;
+      slashMat.opacity = Math.max(0, slashLife / 0.6) * 0.9;
       if (slashLife <= 0) slash.visible = false;
     }
 
@@ -333,7 +338,9 @@ function start(model: THREE.Object3D, rollPivot: THREE.Object3D, animator: Anima
       else look.set(0, 0, 1);
       const right = new THREE.Vector3().crossVectors(new THREE.Vector3(0, 1, 0), look).normalize();
       g.ready = true;
+      model.updateWorldMatrix(true, true);
       const nose = new THREE.Vector3(0, 1.2, 0.8).applyMatrix4(model.matrixWorld);
+      slashTipWorld.copy(slashTipLocal).applyMatrix4(slash.matrixWorld);
       const ndc = character.position.clone();
       ndc.y += 1.2;
       ndc.project(camera);
@@ -353,6 +360,12 @@ function start(model: THREE.Object3D, rollPivot: THREE.Object3D, animator: Anima
         nose: { x: nose.x, z: nose.z },
         screenX: ndc.x,
         screenY: ndc.y,
+        rollVisual: character.rollVisual,
+      };
+      g.slashTip = {
+        x: slashTipWorld.x,
+        z: slashTipWorld.z,
+        visible: slash.visible,
       };
       const ce = camera.matrixWorld.elements;
       g.camera = {
