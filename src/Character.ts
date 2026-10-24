@@ -1,0 +1,156 @@
+import * as THREE from 'three';
+import type { Input } from './Input';
+import type { Animator, AnimName } from './Animator';
+
+// 第三人称角色控制器（魔兽世界式：角色相对移动）
+export class Character {
+  position = new THREE.Vector3(0, 0, 4);
+  velocityY = 0;
+  grounded = true;
+  speed = 0;
+  facing = 0;       // 角色朝向（= object.rotation.y）
+  isAttacking = false;
+
+  // 碰撞用近似胶囊
+  readonly radius = 0.45;
+  readonly height = 1.9;
+
+  constructor(private object: THREE.Object3D, private animator: Animator) {
+    this.facing = object.rotation.y;
+  }
+
+  // 公开：原地转向到面向世界点 (x,z)
+  faceTowards(x: number, z: number) {
+    const yaw = Math.atan2(x - this.position.x, z - this.position.z);
+    this._desiredYaw = yaw;
+  }
+  private _desiredYaw: number | null = null;
+
+  // 公开：移动到某点（直接设位置，测试/瞬移用）
+  teleport(x: number, y: number, z: number) {
+    this.position.set(x, y, z);
+  }
+
+  // 公开：触发攻击
+  triggerAttack() {
+    if (this.isAttacking || !this.grounded) return false;
+    this.isAttacking = true;
+    this.animator.play('attack');
+    return true;
+  }
+
+  update(dt: number, input: Input, groundHeight: (x: number, z: number) => number, colliders: { x: number; z: number; r: number }[]) {
+    // ---- 转身（A/D、方向键、鼠标右键、faceTowards） ----
+    if (input.turnLeft) this.object.rotation.y += 2.8 * dt;
+    if (input.turnRight) this.object.rotation.y -= 2.8 * dt;
+    if (input.rightYawDelta !== 0) {
+      this.object.rotation.y += input.rightYawDelta;
+      input.rightYawDelta = 0;
+    }
+    if (this._desiredYaw !== null) {
+      let d = this._desiredYaw - this.object.rotation.y;
+      d = Math.atan2(Math.sin(d), Math.cos(d));
+      this.object.rotation.y += d * Math.min(1, dt * 14);
+      if (Math.abs(d) < 0.01) this.object.rotation.y = this._desiredYaw;
+    }
+    this.facing = this.object.rotation.y;
+
+    // ---- 角色相对移动 ----
+    let mf = 0;
+    let ms = 0;
+    if (input.forward) mf += 1;
+    if (input.back) mf -= 1;
+    if (input.strafeLeft) ms -= 1;
+    if (input.strafeRight) ms += 1;
+
+    const move = new THREE.Vector3();
+    if (mf !== 0 || ms !== 0) {
+      const s = Math.sin(this.facing);
+      const c = Math.cos(this.facing);
+      move.x = s * mf + c * ms;
+      move.z = c * mf - s * ms;
+      move.normalize();
+    }
+
+    let maxSpeed = 4.5;
+    if (mf < 0) maxSpeed = 1.8;
+    else if (input.sprint && mf > 0) maxSpeed = 8.5;
+    // 攻击时不能位移
+    if (this.isAttacking) { maxSpeed = 0; }
+    const accel = this.grounded ? 14 : 5;
+
+    const targetVx = this.isAttacking ? 0 : move.x * maxSpeed;
+    const targetVz = this.isAttacking ? 0 : move.z * maxSpeed;
+    const vx = THREE.MathUtils.damp(this._vx, targetVx, accel, dt);
+    const vz = THREE.MathUtils.damp(this._vz, targetVz, accel, dt);
+    this._vx = vx;
+    this._vz = vz;
+    this.speed = Math.hypot(vx, vz);
+
+    // ---- 重力 / 跳跃 ----
+    if (input.jumpPressed && this.grounded && !this.isAttacking) {
+      this.velocityY = 7.2;
+      this.grounded = false;
+      this.animator.play('jump');
+    }
+    this.velocityY -= 20 * dt;
+
+    let nx = this.position.x + vx * dt;
+    let nz = this.position.z + vz * dt;
+
+    const bound = 118;
+    nx = THREE.MathUtils.clamp(nx, -bound, bound);
+    nz = THREE.MathUtils.clamp(nz, -bound, bound);
+
+    // 圆柱碰撞
+    for (const c of colliders) {
+      const dx = nx - c.x;
+      const dz = nz - c.z;
+      const dist = Math.hypot(dx, dz);
+      const minDist = c.r + this.radius;
+      if (dist < minDist && dist > 0.0001) {
+        nx = c.x + (dx / dist) * minDist;
+        nz = c.z + (dz / dist) * minDist;
+      }
+    }
+
+    let ny = this.position.y + this.velocityY * dt;
+
+    const gh = groundHeight(nx, nz);
+    if (ny <= gh) {
+      ny = gh;
+      this.velocityY = 0;
+      this.grounded = true;
+    } else {
+      this.grounded = false;
+    }
+
+    this.position.set(nx, ny, nz);
+    this.object.position.copy(this.position);
+
+    // ---- 攻击一次性动作结束检测 ----
+    if (this.isAttacking && this.animator.isOneShotDone()) {
+      this.isAttacking = false;
+    }
+
+    // ---- 选择循环动画 ----
+    if (this.animator_isOneShotActive()) {
+      // jump/attack 期间不切换
+    } else if (!this.grounded) {
+      this.animator.play('jump');
+    } else if (this.speed > 6) {
+      this.animator.play('run');
+    } else if (this.speed > 0.4) {
+      this.animator.play('walk');
+    } else {
+      this.animator.play('idle');
+    }
+  }
+
+  private animator_isOneShotActive() {
+    return !this.grounded || this.isAttacking;
+  }
+
+  private _vx = 0;
+  private _vz = 0;
+}
