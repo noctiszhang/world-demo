@@ -154,7 +154,9 @@ export class Animator {
     if (this.current !== 'jump' && this.current !== 'attack' && this.current !== 'roll') return false;
     const a = this.actions.get(this.current!);
     if (!a) return true;
-    return !a.isRunning() || a.time >= a.getClip().duration - 0.02;
+    const dur = a.getClip().duration;
+    // clampWhenFinished 时 isRunning 可能一直为 true，以时间进度为准
+    return a.time >= dur - 0.05 || a.getEffectiveWeight() < 0.05;
   }
 
   update(dt: number) {

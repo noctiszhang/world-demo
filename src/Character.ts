@@ -5,8 +5,11 @@ import type { Animator } from './Animator';
 const ROLL_DUR = 0.48;
 const ROLL_SPEED = 11.5;
 const ROLL_CD = 0.55;
+const _fwd = new THREE.Vector3();
+const _right = new THREE.Vector3();
+const _up = new THREE.Vector3(0, 1, 0);
 
-/** 塞尔达式：相机相对移动；角色朝向速度方向 */
+/** 塞尔达式：用相机真实朝向算移动，避免手写 yaw 符号搞反 */
 export class Character {
   position = new THREE.Vector3(0, 0, 4);
   velocityY = 0;
@@ -25,14 +28,11 @@ export class Character {
   private _desiredYaw: number | null = null;
   private _vx = 0;
   private _vz = 0;
+  private baseY = 0; // 翻滚前离地高度，用于 hop
 
   readonly radius = 0.45;
   readonly height = 1.9;
 
-  /**
-   * @param object 外层位移节点（脚底）
-   * @param rollPivot 翻滚时绕局部 X 旋转的视觉节点（含骨架）
-   */
   constructor(
     private object: THREE.Object3D,
     private rollPivot: THREE.Object3D,
@@ -43,6 +43,11 @@ export class Character {
 
   faceTowards(x: number, z: number) {
     this._desiredYaw = Math.atan2(x - this.position.x, z - this.position.z);
+  }
+
+  /** 世界前方单位向量（与角色视觉朝向一致） */
+  getForwardXZ(out = new THREE.Vector2()) {
+    return out.set(Math.sin(this.facing), Math.cos(this.facing));
   }
 
   teleport(x: number, y: number, z: number) {
@@ -60,20 +65,15 @@ export class Character {
     return true;
   }
 
-  triggerRoll(input: Input) {
+  triggerRoll(input: Input, camera: THREE.Camera) {
     if (!this.alive || this.isRolling || this.isAttacking || !this.grounded || this.rollCd > 0) {
       return false;
     }
-    // 翻滚方向：当前输入（相机相对已在 update 外算好的话用速度），否则朝向
+    this.computeCamBasis(camera);
     const mf = input.moveForward;
     const ms = input.moveStrafe;
-    const camYaw = input.yaw;
-    const fX = -Math.sin(camYaw);
-    const fZ = -Math.cos(camYaw);
-    const rX = -Math.cos(camYaw);
-    const rZ = Math.sin(camYaw);
-    let dx = fX * mf + rX * ms;
-    let dz = fZ * mf + rZ * ms;
+    let dx = _fwd.x * mf + _right.x * ms;
+    let dz = _fwd.z * mf + _right.z * ms;
     const mag = Math.hypot(dx, dz);
     if (mag > 0.15) {
       dx /= mag;
@@ -89,7 +89,8 @@ export class Character {
     this.isAttacking = false;
     this.facing = Math.atan2(dx, dz);
     this.object.rotation.y = this.facing;
-    this.hurtCooldown = Math.max(this.hurtCooldown, ROLL_DUR); // 全程无敌
+    this.baseY = this.position.y;
+    this.hurtCooldown = Math.max(this.hurtCooldown, ROLL_DUR);
     this.animator.playRoll();
     return true;
   }
@@ -104,56 +105,61 @@ export class Character {
       this.isRolling = false;
       this._vx = 0;
       this._vz = 0;
-      this.rollPivot.rotation.x = 0;
+      this.rollPivot.rotation.set(0, 0, 0);
+      this.rollPivot.position.y = 0;
     }
     return true;
   }
 
-  update(dt: number, input: Input, groundHeight: (x: number, z: number) => number, colliders: { x: number; z: number; r: number }[]) {
+  update(
+    dt: number,
+    input: Input,
+    camera: THREE.Camera,
+    groundHeight: (x: number, z: number) => number,
+    colliders: { x: number; z: number; r: number }[],
+  ) {
     if (this.hurtCooldown > 0) this.hurtCooldown = Math.max(0, this.hurtCooldown - dt);
     if (this.rollCd > 0) this.rollCd = Math.max(0, this.rollCd - dt);
 
     if (!this.alive) {
       this.object.position.copy(this.position);
       this.object.rotation.z = THREE.MathUtils.damp(this.object.rotation.z, Math.PI / 2, 6, dt);
-      this.rollPivot.rotation.x = 0;
+      this.rollPivot.rotation.set(0, 0, 0);
+      this.rollPivot.position.y = 0;
       return;
     }
 
-    // ---- 翻滚 ----
     if (this.isRolling) {
       this.rollT -= dt;
       const p = 1 - Math.max(0, this.rollT) / ROLL_DUR;
-      // 前空翻一圈（绕局部 X）
+      // 绕骨盆高度翻，并 hop 离地，避免滚进地里
+      this.rollPivot.position.y = 0.85;
       this.rollPivot.rotation.x = p * Math.PI * 2;
       this._vx = this.rollDir.x * ROLL_SPEED;
       this._vz = this.rollDir.y * ROLL_SPEED;
       this.speed = ROLL_SPEED;
-      this.velocityY -= 20 * dt;
+      this.velocityY = 0;
 
       let nx = this.position.x + this._vx * dt;
       let nz = this.position.z + this._vz * dt;
       nx = THREE.MathUtils.clamp(nx, -118, 118);
       nz = THREE.MathUtils.clamp(nz, -118, 118);
       ({ x: nx, z: nz } = this.resolveColliders(nx, nz, colliders));
-
-      let ny = this.position.y + this.velocityY * dt;
       const gh = groundHeight(nx, nz);
-      if (ny <= gh) {
-        ny = gh;
-        this.velocityY = 0;
-        this.grounded = true;
-      } else {
-        this.grounded = false;
-      }
-      this.position.set(nx, ny, nz);
+      const hop = Math.sin(p * Math.PI) * 0.7;
+      this.position.set(nx, gh + hop, nz);
       this.object.position.copy(this.position);
       this.object.rotation.y = this.facing;
       this.object.rotation.z = 0;
+      this.grounded = hop < 0.05;
 
       if (this.rollT <= 0) {
         this.isRolling = false;
-        this.rollPivot.rotation.x = 0;
+        this.rollPivot.rotation.set(0, 0, 0);
+        this.rollPivot.position.y = 0;
+        this.position.y = gh;
+        this.object.position.y = gh;
+        this.grounded = true;
         this.animator.endRoll();
         this._vx *= 0.35;
         this._vz *= 0.35;
@@ -162,25 +168,20 @@ export class Character {
     }
 
     this.rollPivot.rotation.x = THREE.MathUtils.damp(this.rollPivot.rotation.x, 0, 16, dt);
+    this.rollPivot.position.y = THREE.MathUtils.damp(this.rollPivot.position.y, 0, 16, dt);
 
-    // ---- 相机相对移动（塞尔达） ----
+    this.computeCamBasis(camera);
     const mf = input.moveForward;
     const ms = input.moveStrafe;
-    const camYaw = input.yaw;
-    const fX = -Math.sin(camYaw);
-    const fZ = -Math.cos(camYaw);
-    const rX = -Math.cos(camYaw);
-    const rZ = Math.sin(camYaw);
 
     const move = new THREE.Vector3();
     const moveMag = Math.hypot(mf, ms);
     if (moveMag > 0.001) {
       const inv = 1 / moveMag;
-      move.x = (fX * mf + rX * ms) * inv;
-      move.z = (fZ * mf + rZ * ms) * inv;
+      move.x = (_fwd.x * mf + _right.x * ms) * inv;
+      move.z = (_fwd.z * mf + _right.z * ms) * inv;
     }
 
-    // 朝向：有输入立刻朝移动方向（别拖泥带水）；攻击锁定 faceTowards
     if (this._desiredYaw !== null) {
       let d = this._desiredYaw - this.object.rotation.y;
       d = Math.atan2(Math.sin(d), Math.cos(d));
@@ -193,20 +194,17 @@ export class Character {
       const targetYaw = Math.atan2(move.x, move.z);
       let d = targetYaw - this.object.rotation.y;
       d = Math.atan2(Math.sin(d), Math.cos(d));
-      // 键盘点按时几乎瞬转，避免「先侧身再走」的怪异感
       this.object.rotation.y += d * Math.min(1, dt * 22);
       if (Math.abs(d) < 0.08) this.object.rotation.y = targetYaw;
     }
     input.rightYawDelta = 0;
     this.facing = this.object.rotation.y;
 
-    // 数字键 WASD 用满速；摇杆才按幅度缩放
     const analog = Math.abs(input.stickForward) > 0.01 || Math.abs(input.stickStrafe) > 0.01;
     const speedScale = analog ? Math.min(1, moveMag) : (moveMag > 0.01 ? 1 : 0);
     let maxSpeed = 4.5 * speedScale;
     if (input.sprint && moveMag > 0.35) maxSpeed = 8.5 * (analog ? Math.min(1, moveMag) : 1);
     if (this.isAttacking) maxSpeed *= 0.45;
-    // 比之前略跟手，减少「滑、钝」
     const accel = this.grounded ? 18 : 6;
 
     const targetVx = move.x * maxSpeed;
@@ -249,7 +247,7 @@ export class Character {
     }
 
     if (this.isAttacking || (!this.grounded && this.animator.currentName === 'jump')) {
-      // keep one-shot
+      // keep
     } else if (!this.grounded) {
       this.animator.play('jump');
     } else if (this.speed > 6) {
@@ -259,6 +257,17 @@ export class Character {
     } else {
       this.animator.play('idle');
     }
+  }
+
+  private computeCamBasis(camera: THREE.Camera) {
+    camera.getWorldDirection(_fwd);
+    _fwd.y = 0;
+    if (_fwd.lengthSq() < 1e-8) _fwd.set(0, 0, 1);
+    else _fwd.normalize();
+    // 屏幕右 = up × look
+    _right.crossVectors(_up, _fwd);
+    if (_right.lengthSq() < 1e-8) _right.set(1, 0, 0);
+    else _right.normalize();
   }
 
   private resolveColliders(nx: number, nz: number, colliders: { x: number; z: number; r: number }[]) {

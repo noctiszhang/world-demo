@@ -63,11 +63,11 @@ loader.load(
     // 轨道名无点、骨骼名有点 → 统一成无点，否则攻击手臂轨绑不上
     renameBonesForTracks(model);
 
-    // model(脚底) → rollPivot(翻滚旋转) → inner(上移骨架)
+    // model(脚底) → rollPivot(翻滚绕骨盆) → inner(骨架)
     const rollPivot = new THREE.Group();
     rollPivot.name = 'rollPivot';
     const inner = new THREE.Group();
-    inner.position.y = 0.95;
+    inner.position.y = 0.95; // 静止时脚底对齐；翻滚时 rollPivot.y 抬起
     model.traverse((o) => {
       const mesh = o as THREE.Mesh;
       if (mesh.isMesh) {
@@ -195,33 +195,15 @@ function start(model: THREE.Object3D, rollPivot: THREE.Object3D, animator: Anima
   const clock = new THREE.Clock();
   let shake = 0;
 
-  function nearestLivingEnemy(maxDist: number): Enemy | null {
-    let best: Enemy | null = null;
-    let bestD = maxDist;
-    for (const e of enemies) {
-      if (!e.alive) continue;
-      const d = Math.hypot(
-        e.group.position.x - character.position.x,
-        e.group.position.z - character.position.z,
-      );
-      if (d < bestD) { bestD = d; best = e; }
-    }
-    return best;
-  }
-
   function animate() {
     const dt = Math.min(clock.getDelta(), 0.05);
     const time = clock.elapsedTime;
 
-    // 翻滚 / 攻击
+    // 翻滚 / 攻击（攻击严格跟角色面朝，不再自动扭向附近怪）
     if (input.rollPressed && character.alive) {
-      character.triggerRoll(input);
+      character.triggerRoll(input, camera);
     }
     if (input.attackPressed && character.alive) {
-      const target = nearestLivingEnemy(attackRange + 0.8);
-      if (target) {
-        character.faceTowards(target.group.position.x, target.group.position.z);
-      }
       if (character.triggerAttack()) {
         attackHitDone = false;
         slashLife = 0.35;
@@ -230,7 +212,7 @@ function start(model: THREE.Object3D, rollPivot: THREE.Object3D, animator: Anima
       }
     }
 
-    character.update(dt, input, world.groundHeight, world.colliders);
+    character.update(dt, input, camera, world.groundHeight, world.colliders);
     animator.update(dt);
 
     // 攻击命中：在命中帧结算一次
@@ -346,9 +328,44 @@ function start(model: THREE.Object3D, rollPivot: THREE.Object3D, animator: Anima
       camera.position.y += (Math.random() - 0.5) * a;
     }
 
+    // 自动化测试 / Agent 调试桥（只读）
+    const g = (window as unknown as { __GAME__?: Record<string, unknown> }).__GAME__;
+    if (g) {
+      const look = new THREE.Vector3();
+      camera.getWorldDirection(look);
+      look.y = 0;
+      if (look.lengthSq() > 1e-8) look.normalize();
+      else look.set(0, 0, 1);
+      const right = new THREE.Vector3().crossVectors(new THREE.Vector3(0, 1, 0), look).normalize();
+      g.ready = true;
+      g.player = {
+        x: character.position.x,
+        y: character.position.y,
+        z: character.position.z,
+        facing: character.facing,
+        speed: character.speed,
+        health: character.health,
+        alive: character.alive,
+        isAttacking: character.isAttacking,
+        isRolling: character.isRolling,
+      };
+      g.camera = {
+        yaw: input.yaw,
+        pitch: input.pitch,
+        forward: { x: look.x, z: look.z },
+        right: { x: right.x, z: right.z },
+      };
+      g.enemiesAlive = enemies.filter((e) => e.alive).length;
+    }
+
     composer.render();
     requestAnimationFrame(animate);
   }
+
+  (window as unknown as { __GAME__: Record<string, unknown> }).__GAME__ = {
+    ready: true,
+    version: '0.2.0',
+  };
 
   function resolveCameraDistanceSafe(target: THREE.Vector3, fullDist: number, dir: THREE.Vector3) {
     const N = 14;
