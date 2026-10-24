@@ -1,12 +1,11 @@
 import * as THREE from 'three';
 
-export type AnimName = 'idle' | 'walk' | 'run' | 'jump' | 'attack';
+export type AnimName = 'idle' | 'walk' | 'run' | 'jump' | 'attack' | 'roll';
 
 /**
  * glTF 轨道用 shoulderL / upper_armR 这类无点名；
  * Blender 导出骨骼却是 shoulder.L / upper_arm.R。
- * Three.js PropertyBinding 按 '.' 拆路径，带点骨骼名绑不上，
- * 所以加载后要把骨骼改成与轨道一致的无点名。
+ * Three.js PropertyBinding 按 '.' 拆路径，带点骨骼名绑不上。
  */
 export const BONE_DOT_TO_TRACK: Record<string, string> = {
   'shoulder.L': 'shoulderL',
@@ -32,11 +31,21 @@ export function renameBonesForTracks(root: THREE.Object3D) {
   });
 }
 
-// 管理 gltf 的 AnimationMixer：按状态切换动画、淡入淡出
+/**
+ * 基于 jump 剪辑生成翻滚用动作：加速播放 + 略缩时长，
+ * 配合 Character 的 rollPivot 前空翻旋转形成翻滚动效。
+ */
+function buildRollClipFromJump(jump: THREE.AnimationClip): THREE.AnimationClip {
+  const tracks = jump.tracks.map((t) => t.clone());
+  const clip = new THREE.AnimationClip('roll', Math.min(0.48, jump.duration * 0.55), tracks);
+  return clip;
+}
+
 export class Animator {
   private mixer: THREE.AnimationMixer;
   private actions = new Map<AnimName, THREE.AnimationAction>();
   private current: AnimName | null = null;
+  private rolling = false;
 
   constructor(model: THREE.Object3D, clips: THREE.AnimationClip[]) {
     this.mixer = new THREE.AnimationMixer(model);
@@ -50,6 +59,15 @@ export class Animator {
         this.actions.set(name, action);
       }
     }
+    const jump = clips.find((c) => c.name === 'jump');
+    if (jump) {
+      const rollClip = buildRollClipFromJump(jump);
+      const rollAction = this.mixer.clipAction(rollClip);
+      rollAction.setLoop(THREE.LoopOnce, 1);
+      rollAction.clampWhenFinished = true;
+      rollAction.timeScale = 1.65;
+      this.actions.set('roll', rollAction);
+    }
     this.play('idle', 0.15);
   }
 
@@ -57,20 +75,19 @@ export class Animator {
     return this.current;
   }
 
-  /** 0..1 当前一次性动作进度；非 one-shot 返回 0 */
   get oneShotProgress() {
-    if (this.current !== 'jump' && this.current !== 'attack') return 0;
-    const a = this.actions.get(this.current);
+    if (this.current !== 'jump' && this.current !== 'attack' && this.current !== 'roll') return 0;
+    const a = this.actions.get(this.current!);
     if (!a) return 0;
     const dur = a.getClip().duration;
     return dur > 0 ? Math.min(1, a.time / dur) : 1;
   }
 
   play(name: AnimName, fade = 0.2) {
+    if (this.rolling && name !== 'roll') return;
     const next = this.actions.get(name);
     if (!next) return;
 
-    // 允许在攻击中重触发：重置动作
     if (name === this.current && (name === 'attack' || name === 'jump')) {
       next.reset();
       next.setEffectiveWeight(1);
@@ -81,18 +98,17 @@ export class Animator {
 
     const prev = this.current ? this.actions.get(this.current) : null;
 
-    if (name === 'jump' || name === 'attack') {
+    if (name === 'jump' || name === 'attack' || name === 'roll') {
       next.setLoop(THREE.LoopOnce, 1);
       next.clampWhenFinished = true;
       next.reset();
       next.setEffectiveWeight(1);
       next.fadeIn(0.05).play();
-      if (prev && prev !== next) prev.fadeOut(0.12);
+      if (prev && prev !== next) prev.fadeOut(0.1);
       this.current = name;
       return;
     }
 
-    // 循环类
     next.setLoop(THREE.LoopRepeat, Infinity);
     next.clampWhenFinished = false;
     next.reset();
@@ -102,10 +118,41 @@ export class Animator {
     this.current = name;
   }
 
-  // jump/attack 播完后由外部决定回到哪个循环动作
+  playRoll() {
+    this.rolling = true;
+    if (this.actions.has('roll')) {
+      this.play('roll', 0.04);
+    } else {
+      this.play('jump', 0.04);
+      const j = this.actions.get('jump');
+      if (j) j.timeScale = 1.8;
+    }
+    const run = this.actions.get('run');
+    if (run) {
+      run.reset();
+      run.setEffectiveWeight(0.4);
+      run.setEffectiveTimeScale(2);
+      run.fadeIn(0.04).play();
+    }
+  }
+
+  endRoll() {
+    this.rolling = false;
+    const run = this.actions.get('run');
+    if (run) {
+      run.fadeOut(0.1);
+      run.setEffectiveTimeScale(1);
+    }
+    const jump = this.actions.get('jump');
+    if (jump) jump.timeScale = 1;
+    const roll = this.actions.get('roll');
+    if (roll) roll.fadeOut(0.08);
+    this.current = null;
+  }
+
   isOneShotDone() {
-    if (this.current !== 'jump' && this.current !== 'attack') return false;
-    const a = this.actions.get(this.current);
+    if (this.current !== 'jump' && this.current !== 'attack' && this.current !== 'roll') return false;
+    const a = this.actions.get(this.current!);
     if (!a) return true;
     return !a.isRunning() || a.time >= a.getClip().duration - 0.02;
   }

@@ -40,8 +40,8 @@ export class Enemy {
   private readonly strikeDur = 0.1;    // 短命中窗
   private readonly recoverDur = 0.85;  // 还击/逃跑空隙
   private readonly attackDamage = 12;
-  private readonly preferDist = 2.4;   // 非主攻者保持距离环绕
   private readonly windupCommitRange = 2.15; // 前摇中离开此距离 → 落空
+  readonly bodyRadius = 0.75; // 怪间硬碰撞半径
 
   constructor(cfg: EnemyConfig) {
     this.heightAt = cfg.heightAt;
@@ -127,17 +127,14 @@ export class Enemy {
   }
 
   /**
-   * @param canStrike 本帧是否允许成为「主攻者」（限制围殴）
-   * @param separation 与其他怪的推开向量
+   * 允许多只同时进入攻击；怪间重叠由主循环硬碰撞分离。
    * @returns 对玩家造成的伤害（仅 strike 命中窗）
    */
   update(
     dt: number,
-    time: number,
+    _time: number,
     playerPos: THREE.Vector3 | undefined,
     playerAlive: boolean,
-    canStrike: boolean,
-    separation: { x: number; z: number },
   ): number {
     if (!this.alive) {
       this.group.position.y = Math.max(-0.9, this.group.position.y - dt * 0.6);
@@ -213,38 +210,26 @@ export class Enemy {
         this.windupProgress = 0;
         if (this.phaseT <= 0) this.phase = 'chase';
       } else {
-        // idle / chase
+        // idle / chase — 每只进范围都可前摇攻击
         if (dist < this.aggroRange && dist > 0.001) {
           this.phase = 'chase';
           this.group.rotation.y = Math.atan2(dx, dz);
 
-          if (canStrike && dist <= this.attackRange && this.attackCd <= 0) {
+          if (dist <= this.attackRange && this.attackCd <= 0) {
             this.phase = 'windup';
             this.phaseT = this.windupDur;
             this.windupProgress = 0;
             this.lockedDir.set(dx / dist, dz / dist);
-          } else {
-            // 主攻者贴脸；其余保持环绕距离，避免叠罗汉
-            const targetDist = canStrike ? this.attackRange * 0.92 : this.preferDist;
-            if (dist > targetDist + 0.15) {
-              const step = Math.min(dist - targetDist, this.moveSpeed * dt);
-              this.group.position.x += (dx / dist) * step;
-              this.group.position.z += (dz / dist) * step;
-            } else if (!canStrike && dist < this.preferDist - 0.2) {
-              // 稍退开
-              this.group.position.x -= (dx / dist) * this.moveSpeed * 0.6 * dt;
-              this.group.position.z -= (dz / dist) * this.moveSpeed * 0.6 * dt;
-            }
+          } else if (dist > this.attackRange * 0.92) {
+            const step = Math.min(dist - this.attackRange * 0.9, this.moveSpeed * dt);
+            this.group.position.x += (dx / dist) * step;
+            this.group.position.z += (dz / dist) * step;
           }
         } else {
           this.phase = 'idle';
         }
       }
     }
-
-    // 怪间分离
-    this.group.position.x += separation.x * dt;
-    this.group.position.z += separation.z * dt;
 
     this.group.position.y = this.heightAt(this.group.position.x, this.group.position.z);
 

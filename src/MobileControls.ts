@@ -1,10 +1,9 @@
 import type { Input } from './Input';
 
-/** 手机：左摇杆移动，右下攻击/跳跃 */
+/** 手机：左摇杆（相机相对），右下 攻/跳/滚 */
 export class MobileControls {
   private root: HTMLDivElement;
   private knob: HTMLDivElement;
-  private base: HTMLDivElement;
   private active = false;
   private pointerId: number | null = null;
   private originX = 0;
@@ -20,6 +19,7 @@ export class MobileControls {
         <div class="knob"></div>
       </div>
       <div class="btns">
+        <button type="button" id="mc-roll" aria-label="翻滚">滚</button>
         <button type="button" id="mc-jump" aria-label="跳跃">跳</button>
         <button type="button" id="mc-atk" aria-label="攻击">攻</button>
       </div>
@@ -47,18 +47,24 @@ export class MobileControls {
         box-shadow: 0 2px 8px rgba(0,0,0,.25);
       }
       #mobile-controls .btns {
-        position: absolute; right: 16px; bottom: 36px;
-        display: flex; flex-direction: column; gap: 14px; pointer-events: auto;
+        position: absolute; right: 14px; bottom: 28px;
+        display: grid; grid-template-columns: 1fr 1fr; gap: 10px;
+        pointer-events: auto; align-items: end;
       }
       #mobile-controls .btns button {
-        width: 72px; height: 72px; border-radius: 50%;
+        width: 64px; height: 64px; border-radius: 50%;
         border: 2px solid rgba(255,255,255,.45);
         background: rgba(20,24,32,.45); color: #fff;
-        font-size: 18px; font-weight: 600; pointer-events: auto;
+        font-size: 16px; font-weight: 600;
         -webkit-tap-highlight-color: transparent; user-select: none;
       }
+      #mobile-controls #mc-atk {
+        grid-column: 2; grid-row: 1 / span 2;
+        width: 78px; height: 78px; font-size: 20px; margin-bottom: 8px;
+      }
+      #mobile-controls #mc-jump { grid-column: 1; grid-row: 2; }
+      #mobile-controls #mc-roll { grid-column: 1; grid-row: 1; }
       #mobile-controls .btns button:active { background: rgba(255,200,80,.45); }
-      #mobile-controls #mc-atk { width: 84px; height: 84px; font-size: 20px; }
       @media (pointer: fine) {
         #mobile-controls.show { display: none !important; }
       }
@@ -66,7 +72,6 @@ export class MobileControls {
     document.head.appendChild(style);
     document.body.appendChild(this.root);
 
-    this.base = this.root.querySelector('.base') as HTMLDivElement;
     this.knob = this.root.querySelector('.knob') as HTMLDivElement;
     const stick = this.root.querySelector('#mc-stick') as HTMLDivElement;
 
@@ -100,11 +105,15 @@ export class MobileControls {
 
     const bindBtn = (id: string, fn: () => void) => {
       const el = this.root.querySelector(id) as HTMLButtonElement;
-      const fire = (e: Event) => { e.preventDefault(); e.stopPropagation(); fn(); };
-      el.addEventListener('pointerdown', fire);
+      el.addEventListener('pointerdown', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        fn();
+      });
     };
     bindBtn('#mc-atk', () => this.input.queueAttack());
     bindBtn('#mc-jump', () => this.input.queueJump());
+    bindBtn('#mc-roll', () => this.input.queueRoll());
 
     this.syncVisibility();
     window.addEventListener('resize', () => this.syncVisibility());
@@ -124,7 +133,6 @@ export class MobileControls {
       dy = (dy / len) * this.maxR;
     }
     this.knob.style.transform = `translate(${dx}px,${dy}px)`;
-    // 屏幕坐标：上=-y → 前进；右=+x → 右平移
     const nx = dx / this.maxR;
     const ny = -dy / this.maxR;
     const mag = Math.min(1, Math.hypot(nx, ny));
@@ -134,8 +142,6 @@ export class MobileControls {
       return;
     }
     const scale = (mag - dead) / (1 - dead);
-    const fx = (nx / mag) * scale;
-    const fy = (ny / mag) * scale;
-    this.input.setStick(fy, fx, mag > 0.85);
+    this.input.setStick((ny / mag) * scale, (nx / mag) * scale, mag > 0.85);
   }
 }

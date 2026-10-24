@@ -63,7 +63,9 @@ loader.load(
     // 轨道名无点、骨骼名有点 → 统一成无点，否则攻击手臂轨绑不上
     renameBonesForTracks(model);
 
-    // 几何中心在原点：包一层 inner 上移 0.95，使外层位置=脚底
+    // model(脚底) → rollPivot(翻滚旋转) → inner(上移骨架)
+    const rollPivot = new THREE.Group();
+    rollPivot.name = 'rollPivot';
     const inner = new THREE.Group();
     inner.position.y = 0.95;
     model.traverse((o) => {
@@ -75,12 +77,13 @@ loader.load(
       }
     });
     [...model.children].forEach((c) => inner.add(c));
-    model.add(inner);
+    rollPivot.add(inner);
+    model.add(rollPivot);
     model.position.set(0, 0, 4);
     scene.add(model);
 
     const animator = new Animator(inner, gltf.animations);
-    start(model, animator);
+    start(model, rollPivot, animator);
   },
   undefined,
   (err) => {
@@ -88,8 +91,8 @@ loader.load(
   }
 );
 
-function start(model: THREE.Object3D, animator: Animator) {
-  const character = new Character(model, animator);
+function start(model: THREE.Object3D, rollPivot: THREE.Object3D, animator: Animator) {
+  const character = new Character(model, rollPivot, animator);
   character.position.set(0, 0, 4);
 
   // ---------- 后期合成（辉光 + 暗角） ----------
@@ -188,7 +191,6 @@ function start(model: THREE.Object3D, animator: Animator) {
   const attackRange = 2.6;
   const attackArc = Math.cos(0.85); // 约 ~96° 前向扇形
   const HIT_FRAME = 0.38; // 动作约 38% 处结算（挥到最前）
-  const MAX_STRIKERS = 1; // 同时主攻怪数量，其余环绕 — 避免围殴
 
   const clock = new THREE.Clock();
   let shake = 0;
@@ -211,7 +213,10 @@ function start(model: THREE.Object3D, animator: Animator) {
     const dt = Math.min(clock.getDelta(), 0.05);
     const time = clock.elapsedTime;
 
-    // 攻击输入：靠近时自动转向最近怪
+    // 翻滚 / 攻击
+    if (input.rollPressed && character.alive) {
+      character.triggerRoll(input);
+    }
     if (input.attackPressed && character.alive) {
       const target = nearestLivingEnemy(attackRange + 0.8);
       if (target) {
@@ -249,52 +254,40 @@ function start(model: THREE.Object3D, animator: Animator) {
       attackHitDone = true;
     }
 
-    // 选最近的 1 只允许进入攻击前摇，其余只能追/环绕
     const living = enemies.filter((e) => e.alive);
-    living.sort((a, b) => {
-      const da = Math.hypot(a.group.position.x - character.position.x, a.group.position.z - character.position.z);
-      const db = Math.hypot(b.group.position.x - character.position.x, b.group.position.z - character.position.z);
-      return da - db;
-    });
-    const strikers = new Set(living.slice(0, MAX_STRIKERS));
-    // 已在 windup/strike/recover 的继续完成，不强制打断
     for (const e of living) {
-      if (e.phase === 'windup' || e.phase === 'strike' || e.phase === 'recover') strikers.add(e);
+      const dmg = e.update(dt, time, character.position, character.alive);
+      if (dmg > 0 && character.takeHit(dmg)) shake = Math.max(shake, 0.22);
     }
 
-    // 怪间分离
-    const seps = living.map(() => ({ x: 0, z: 0 }));
-    for (let i = 0; i < living.length; i++) {
-      for (let j = i + 1; j < living.length; j++) {
-        const a = living[i];
-        const b = living[j];
-        const dx = a.group.position.x - b.group.position.x;
-        const dz = a.group.position.z - b.group.position.z;
-        const d = Math.hypot(dx, dz);
-        const minD = 1.7;
-        if (d < minD && d > 0.001) {
-          const push = (minD - d) * 4;
-          const nx = dx / d;
-          const nz = dz / d;
-          seps[i].x += nx * push;
-          seps[i].z += nz * push;
-          seps[j].x -= nx * push;
-          seps[j].z -= nz * push;
+    // 怪间硬碰撞：迭代推开，禁止重叠
+    for (let iter = 0; iter < 4; iter++) {
+      for (let i = 0; i < living.length; i++) {
+        for (let j = i + 1; j < living.length; j++) {
+          const a = living[i];
+          const b = living[j];
+          const dx = a.group.position.x - b.group.position.x;
+          const dz = a.group.position.z - b.group.position.z;
+          let d = Math.hypot(dx, dz);
+          const minD = a.bodyRadius + b.bodyRadius;
+          if (d < 1e-4) {
+            // 完全重叠时给随机微偏移
+            a.group.position.x += (Math.random() - 0.5) * 0.05;
+            continue;
+          }
+          if (d < minD) {
+            const push = (minD - d) * 0.5;
+            const nx = dx / d;
+            const nz = dz / d;
+            a.group.position.x += nx * push;
+            a.group.position.z += nz * push;
+            b.group.position.x -= nx * push;
+            b.group.position.z -= nz * push;
+            a.group.position.y = world.groundHeight(a.group.position.x, a.group.position.z);
+            b.group.position.y = world.groundHeight(b.group.position.x, b.group.position.z);
+          }
         }
       }
-    }
-
-    for (let i = 0; i < living.length; i++) {
-      const e = living[i];
-      const dmg = e.update(
-        dt,
-        time,
-        character.position,
-        character.alive,
-        strikers.has(e),
-        seps[i],
-      );
-      if (dmg > 0 && character.takeHit(dmg)) shake = Math.max(shake, 0.22);
     }
 
     // 前摇危险圈：地面红环随风摇放大
@@ -330,11 +323,15 @@ function start(model: THREE.Object3D, animator: Animator) {
     hpFill.style.width = `${(character.health / character.maxHealth) * 100}%`;
     if (!character.alive) deadEl.style.display = 'grid';
 
-    // 魔兽跟随镜头
-    const desiredYaw = character.facing + Math.PI;
-    let diff = desiredYaw - input.yaw;
-    diff = Math.atan2(Math.sin(diff), Math.cos(diff));
-    input.yaw += diff * Math.min(1, dt * 4);
+    // 塞尔达：镜头由玩家拖动；仅极弱跟随避免完全丢失角色
+    {
+      const desiredYaw = character.facing + Math.PI;
+      let diff = desiredYaw - input.yaw;
+      diff = Math.atan2(Math.sin(diff), Math.cos(diff));
+      if (character.speed > 1.2 && !character.isRolling) {
+        input.yaw += diff * Math.min(1, dt * 1.1);
+      }
+    }
 
     const target = character.position.clone();
     target.y += 1.5;
