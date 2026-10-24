@@ -6,7 +6,7 @@ import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPa
 import { ShaderPass } from 'three/examples/jsm/postprocessing/ShaderPass.js';
 import { Input } from './Input';
 import { Character } from './Character';
-import { Animator } from './Animator';
+import { Animator, renameBonesForTracks } from './Animator';
 import { buildWorld } from './World';
 import { Enemy } from './Enemy';
 
@@ -58,6 +58,9 @@ loader.load(
   (gltf) => {
     const model = gltf.scene;
 
+    // 轨道名无点、骨骼名有点 → 统一成无点，否则攻击手臂轨绑不上
+    renameBonesForTracks(model);
+
     // 几何中心在原点：包一层 inner 上移 0.95，使外层位置=脚底
     const inner = new THREE.Group();
     inner.position.y = 0.95;
@@ -87,7 +90,7 @@ function start(model: THREE.Object3D, animator: Animator) {
   const character = new Character(model, animator);
   character.position.set(0, 0, 4);
 
-  // ---------- 后期合成（任务4：辉光 + 暗角） ----------
+  // ---------- 后期合成（辉光 + 暗角） ----------
   const composer = new EffectComposer(renderer);
   composer.addPass(new RenderPass(scene, camera));
   const bloom = new UnrealBloomPass(
@@ -102,7 +105,58 @@ function start(model: THREE.Object3D, animator: Animator) {
 
   document.getElementById('loading')!.style.display = 'none';
 
-  // ---------- 怪物（任务6） ----------
+  // ---------- 玩家血条 HUD ----------
+  const hpEl = document.createElement('div');
+  hpEl.id = 'hp';
+  hpEl.innerHTML = '<div class="label">生命</div><div class="track"><div class="fill"></div></div>';
+  document.body.appendChild(hpEl);
+  const hpFill = hpEl.querySelector('.fill') as HTMLDivElement;
+  const style = document.createElement('style');
+  style.textContent = `
+    #hp {
+      position: fixed; left: 16px; bottom: 18px; z-index: 10;
+      width: 220px; pointer-events: none;
+      font: 12px/1.4 -apple-system, "PingFang SC", sans-serif; color: #fff;
+      text-shadow: 0 1px 3px rgba(0,0,0,.6);
+    }
+    #hp .label { margin-bottom: 4px; opacity: .9; }
+    #hp .track {
+      height: 12px; border-radius: 3px; background: rgba(0,0,0,.45);
+      border: 1px solid rgba(255,255,255,.25); overflow: hidden;
+    }
+    #hp .fill {
+      height: 100%; width: 100%; background: linear-gradient(90deg,#3ecf6a,#7dff9a);
+      transform-origin: left center; transition: width .15s linear;
+    }
+    #dead {
+      position: fixed; inset: 0; display: none; place-items: center;
+      background: rgba(10,0,0,.55); color: #fff; z-index: 30;
+      font: 22px/1.6 -apple-system, "PingFang SC", sans-serif; text-align: center;
+    }
+  `;
+  document.head.appendChild(style);
+  const deadEl = document.createElement('div');
+  deadEl.id = 'dead';
+  deadEl.innerHTML = '你倒下了<br/><span style="font-size:14px;opacity:.85">刷新页面重来</span>';
+  document.body.appendChild(deadEl);
+
+  // ---------- 攻击弧光 ----------
+  const slashGeo = new THREE.RingGeometry(0.55, 1.35, 24, 1, -0.6, 1.5);
+  const slashMat = new THREE.MeshBasicMaterial({
+    color: 0xffe08a,
+    transparent: true,
+    opacity: 0,
+    side: THREE.DoubleSide,
+    depthWrite: false,
+    blending: THREE.AdditiveBlending,
+  });
+  const slash = new THREE.Mesh(slashGeo, slashMat);
+  slash.rotation.x = Math.PI / 2;
+  slash.visible = false;
+  scene.add(slash);
+  let slashLife = 0;
+
+  // ---------- 怪物 ----------
   const enemySpots: Array<[number, number]> = [
     [6, -4], [-9, -8], [12, 4], [-6, 10], [16, -12],
   ];
@@ -113,41 +167,89 @@ function start(model: THREE.Object3D, animator: Animator) {
   });
   let attackHitDone = false;
   const attackRange = 2.6;
-  const attackArc = Math.cos(0.8); // 约90度前向扇形
+  const attackArc = Math.cos(0.85); // 约 ~96° 前向扇形
+  const HIT_FRAME = 0.38; // 动作约 38% 处结算（挥到最前）
 
   const clock = new THREE.Clock();
+  let shake = 0;
+
+  function nearestLivingEnemy(maxDist: number): Enemy | null {
+    let best: Enemy | null = null;
+    let bestD = maxDist;
+    for (const e of enemies) {
+      if (!e.alive) continue;
+      const d = Math.hypot(
+        e.group.position.x - character.position.x,
+        e.group.position.z - character.position.z,
+      );
+      if (d < bestD) { bestD = d; best = e; }
+    }
+    return best;
+  }
 
   function animate() {
     const dt = Math.min(clock.getDelta(), 0.05);
     const time = clock.elapsedTime;
 
-    // 攻击输入
-    if (input.attackPressed) {
-      if (character.triggerAttack()) attackHitDone = false;
+    // 攻击输入：靠近时自动转向最近怪
+    if (input.attackPressed && character.alive) {
+      const target = nearestLivingEnemy(attackRange + 0.8);
+      if (target) {
+        character.faceTowards(target.group.position.x, target.group.position.z);
+      }
+      if (character.triggerAttack()) {
+        attackHitDone = false;
+        slashLife = 0.35;
+        slash.visible = true;
+        slashMat.opacity = 0.85;
+      }
     }
 
     character.update(dt, input, world.groundHeight, world.colliders);
     animator.update(dt);
 
-    // 攻击命中判定：攻击动作进行中、且只结算一次（在动作前段）
-    if (character.isAttacking && !attackHitDone) {
+    // 攻击命中：在命中帧结算一次
+    if (character.isAttacking && !attackHitDone && animator.oneShotProgress >= HIT_FRAME) {
       const fx = Math.sin(character.facing);
       const fz = Math.cos(character.facing);
+      let anyHit = false;
       for (const e of enemies) {
         if (!e.alive) continue;
         const dx = e.group.position.x - character.position.x;
         const dz = e.group.position.z - character.position.z;
         const dist = Math.hypot(dx, dz);
-        if (dist > attackRange) continue;
+        if (dist > attackRange || dist < 0.001) continue;
         const dot = (dx / dist) * fx + (dz / dist) * fz;
         if (dot > attackArc) {
           e.takeHit(50);
+          anyHit = true;
         }
       }
+      if (anyHit) shake = 0.18;
       attackHitDone = true;
     }
 
-    for (const e of enemies) e.update(dt, time);
+    for (const e of enemies) {
+      const dmg = e.update(dt, time, character.position, character.alive);
+      if (dmg > 0 && character.takeHit(dmg)) shake = Math.max(shake, 0.22);
+    }
+
+    // 弧光跟随角色前向
+    if (slashLife > 0) {
+      slashLife -= dt;
+      const yaw = character.facing;
+      slash.position.set(
+        character.position.x + Math.sin(yaw) * 1.1,
+        character.position.y + 1.05,
+        character.position.z + Math.cos(yaw) * 1.1,
+      );
+      slash.rotation.z = -yaw;
+      slashMat.opacity = Math.max(0, slashLife / 0.35) * 0.85;
+      if (slashLife <= 0) slash.visible = false;
+    }
+
+    hpFill.style.width = `${(character.health / character.maxHealth) * 100}%`;
+    if (!character.alive) deadEl.style.display = 'grid';
 
     // 魔兽跟随镜头
     const desiredYaw = character.facing + Math.PI;
@@ -169,6 +271,13 @@ function start(model: THREE.Object3D, animator: Animator) {
     const safeDist = resolveCameraDistanceSafe(target, input.distance, dir);
     camera.position.copy(target).add(dir.clone().multiplyScalar(safeDist));
     camera.lookAt(target);
+
+    if (shake > 0) {
+      shake = Math.max(0, shake - dt);
+      const a = shake * 0.35;
+      camera.position.x += (Math.random() - 0.5) * a;
+      camera.position.y += (Math.random() - 0.5) * a;
+    }
 
     composer.render();
     requestAnimationFrame(animate);

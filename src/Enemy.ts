@@ -6,7 +6,7 @@ export interface EnemyConfig {
   heightAt: (x: number, z: number) => number;
 }
 
-// 简单低模怪物（哥布林/史莱姆风）：带血条
+// 简单低模怪物（哥布林/史莱姆风）：带血条 + 追击/近战
 export class Enemy {
   group: THREE.Group;
   health = 100;
@@ -16,8 +16,14 @@ export class Enemy {
   private barMat: THREE.SpriteMaterial;
   private bob = Math.random() * Math.PI * 2;
   hitFlash = 0;
+  private heightAt: (x: number, z: number) => number;
+  private attackCd = 0;
+  private readonly aggroRange = 11;
+  private readonly attackRange = 1.45;
+  private readonly moveSpeed = 2.4;
 
   constructor(cfg: EnemyConfig) {
+    this.heightAt = cfg.heightAt;
     const y = cfg.heightAt(cfg.x, cfg.z);
     this.group = new THREE.Group();
     this.group.position.set(cfg.x, y, cfg.z);
@@ -92,22 +98,55 @@ export class Enemy {
     this.group.rotation.z = Math.PI / 2;
   }
 
-  update(dt: number, time: number) {
+  /**
+   * @returns 若本帧对玩家造成伤害则返回伤害值，否则 0
+   */
+  update(
+    dt: number,
+    time: number,
+    playerPos?: THREE.Vector3,
+    playerAlive = true,
+  ): number {
     if (!this.alive) {
       // 缓慢下沉
       this.group.position.y = Math.max(-0.9, this.group.position.y - dt * 0.6);
-      return;
+      return 0;
     }
+
+    if (this.attackCd > 0) this.attackCd = Math.max(0, this.attackCd - dt);
+
+    let dealt = 0;
+    if (playerPos && playerAlive) {
+      const dx = playerPos.x - this.group.position.x;
+      const dz = playerPos.z - this.group.position.z;
+      const dist = Math.hypot(dx, dz);
+      if (dist < this.aggroRange && dist > 0.001) {
+        this.group.rotation.y = Math.atan2(dx, dz);
+        if (dist > this.attackRange) {
+          const step = Math.min(dist - this.attackRange * 0.85, this.moveSpeed * dt);
+          this.group.position.x += (dx / dist) * step;
+          this.group.position.z += (dz / dist) * step;
+        } else if (this.attackCd <= 0) {
+          dealt = 10;
+          this.attackCd = 1.35;
+          this.hitFlash = 0.55;
+        }
+      }
+    }
+
+    this.group.position.y = this.heightAt(this.group.position.x, this.group.position.z);
+
     this.bob += dt * 3;
     const body = this.group.getObjectByName('enemyBody') as THREE.Mesh;
     if (body) {
       body.position.y = 0.55 + Math.sin(this.bob) * 0.06;
-      // 受击闪红
+      // 受击/攻击闪红
       if (this.hitFlash > 0) {
         this.hitFlash = Math.max(0, this.hitFlash - dt * 4);
-        const mat = body.material as THREE.MeshStandardMaterial
+        const mat = body.material as THREE.MeshStandardMaterial;
         mat.emissive.setRGB(this.hitFlash * 0.8, 0, 0);
       }
     }
+    return dealt;
   }
 }

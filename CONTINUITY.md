@@ -2,14 +2,25 @@
 
 ## 当前状态（2026-10-24）
 
-可玩体验入口（后续测试/优化默认从这里验证）：
-- 公网隧道：https://candidates-mariah-diffs-bring.trycloudflare.com/ （随本 Cloud Agent 会话；重启后需重建隧道）
+可玩体验入口（后续测试/优化默认从这里验证；公网过期则重建隧道）：
 - Cursor 端口转发：http://localhost:4173/ （`npm run preview:public`）
 - 稳定 Pages（待启用 Actions）：https://noctiszhang.github.io/world-demo/
+- 流程约定：每次更新开/更 PR + 推公网链接；由体验方决定是否合并 main
 
 技术栈：Vite 6 + TypeScript 5.7 + Three.js 0.180（原生，无 React/R3F）
 物理：手写重力、地面高度、圆柱碰撞；未引入 Rapier/Cannon
-验证：tsc 类型检查通过；vite build 生产构建通过；移动/转身/跳跃逻辑用假输入跑帧验证
+
+### 本轮已修 / 已加
+- 攻击动效缺失：骨骼 `*.L/*.R` → 轨道无点名，否则 PropertyBinding 绑不上手臂
+- Animator one-shot 正确淡出旧循环动作；命中帧 ~38% 结算
+- 攻击弧光 + 镜头微震；靠近自动转向最近怪
+- 怪物追击/近战；玩家血条与死亡
+
+### 建议下一批（体验后挑选）
+- 伤害飘字 / 连击 / 重生
+- 敌人巡逻与类型分化
+- 相机遮挡半透、锁定目标
+- 音效、小地图、任务 HUD
 
 ## 文件结构
 

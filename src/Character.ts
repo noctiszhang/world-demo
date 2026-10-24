@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import type { Input } from './Input';
-import type { Animator, AnimName } from './Animator';
+import type { Animator } from './Animator';
 
 // 第三人称角色控制器（魔兽世界式：角色相对移动）
 export class Character {
@@ -10,6 +10,10 @@ export class Character {
   speed = 0;
   facing = 0;       // 角色朝向（= object.rotation.y）
   isAttacking = false;
+  health = 100;
+  maxHealth = 100;
+  alive = true;
+  private hurtCooldown = 0;
 
   // 碰撞用近似胶囊
   readonly radius = 0.45;
@@ -33,13 +37,35 @@ export class Character {
 
   // 公开：触发攻击
   triggerAttack() {
-    if (this.isAttacking || !this.grounded) return false;
+    if (!this.alive || this.isAttacking || !this.grounded) return false;
     this.isAttacking = true;
     this.animator.play('attack');
     return true;
   }
 
+  takeHit(damage: number) {
+    if (!this.alive || this.hurtCooldown > 0) return false;
+    this.health = Math.max(0, this.health - damage);
+    this.hurtCooldown = 0.55;
+    if (this.health <= 0) {
+      this.alive = false;
+      this.isAttacking = false;
+      this._vx = 0;
+      this._vz = 0;
+    }
+    return true;
+  }
+
   update(dt: number, input: Input, groundHeight: (x: number, z: number) => number, colliders: { x: number; z: number; r: number }[]) {
+    if (this.hurtCooldown > 0) this.hurtCooldown = Math.max(0, this.hurtCooldown - dt);
+
+    if (!this.alive) {
+      this.object.position.copy(this.position);
+      // 倒地一点
+      this.object.rotation.z = THREE.MathUtils.damp(this.object.rotation.z, Math.PI / 2, 6, dt);
+      return;
+    }
+
     // ---- 转身（A/D、方向键、鼠标右键、faceTowards） ----
     if (input.turnLeft) this.object.rotation.y += 2.8 * dt;
     if (input.turnRight) this.object.rotation.y -= 2.8 * dt;
@@ -51,7 +77,10 @@ export class Character {
       let d = this._desiredYaw - this.object.rotation.y;
       d = Math.atan2(Math.sin(d), Math.cos(d));
       this.object.rotation.y += d * Math.min(1, dt * 14);
-      if (Math.abs(d) < 0.01) this.object.rotation.y = this._desiredYaw;
+      if (Math.abs(d) < 0.01) {
+        this.object.rotation.y = this._desiredYaw;
+        this._desiredYaw = null;
+      }
     }
     this.facing = this.object.rotation.y;
 
@@ -127,6 +156,7 @@ export class Character {
 
     this.position.set(nx, ny, nz);
     this.object.position.copy(this.position);
+    this.object.rotation.z = THREE.MathUtils.damp(this.object.rotation.z, 0, 10, dt);
 
     // ---- 攻击一次性动作结束检测 ----
     if (this.isAttacking && this.animator.isOneShotDone()) {
