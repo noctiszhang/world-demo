@@ -46,7 +46,7 @@ export class Character {
   takeHit(damage: number) {
     if (!this.alive || this.hurtCooldown > 0) return false;
     this.health = Math.max(0, this.health - damage);
-    this.hurtCooldown = 0.55;
+    this.hurtCooldown = 0.85; // 受击无敌帧：躲开连打/围殴
     if (this.health <= 0) {
       this.alive = false;
       this.isAttacking = false;
@@ -84,32 +84,30 @@ export class Character {
     }
     this.facing = this.object.rotation.y;
 
-    // ---- 角色相对移动 ----
-    let mf = 0;
-    let ms = 0;
-    if (input.forward) mf += 1;
-    if (input.back) mf -= 1;
-    if (input.strafeLeft) ms -= 1;
-    if (input.strafeRight) ms += 1;
+    // ---- 角色相对移动（支持摇杆模拟量） ----
+    let mf = input.moveForward;
+    let ms = input.moveStrafe;
+    // 键盘 A/D 仍为原地转向，不并入平移
 
     const move = new THREE.Vector3();
-    if (mf !== 0 || ms !== 0) {
+    const moveMag = Math.hypot(mf, ms);
+    if (moveMag > 0.001) {
       const s = Math.sin(this.facing);
       const c = Math.cos(this.facing);
-      move.x = s * mf + c * ms;
-      move.z = c * mf - s * ms;
-      move.normalize();
+      const inv = 1 / moveMag;
+      move.x = (s * mf + c * ms) * inv;
+      move.z = (c * mf - s * ms) * inv;
     }
 
-    let maxSpeed = 4.5;
-    if (mf < 0) maxSpeed = 1.8;
-    else if (input.sprint && mf > 0) maxSpeed = 8.5;
-    // 攻击时不能位移
-    if (this.isAttacking) { maxSpeed = 0; }
+    let maxSpeed = 4.5 * Math.min(1, moveMag || 1);
+    if (mf < -0.25 && Math.abs(mf) >= Math.abs(ms)) maxSpeed = 1.8 * Math.min(1, moveMag);
+    else if (input.sprint && mf > 0.35) maxSpeed = 8.5;
+    // 攻击中仍可慢速侧移/后撤，便于走位躲开怪的前摇
+    if (this.isAttacking) maxSpeed *= 0.45;
     const accel = this.grounded ? 14 : 5;
 
-    const targetVx = this.isAttacking ? 0 : move.x * maxSpeed;
-    const targetVz = this.isAttacking ? 0 : move.z * maxSpeed;
+    const targetVx = move.x * maxSpeed;
+    const targetVz = move.z * maxSpeed;
     const vx = THREE.MathUtils.damp(this._vx, targetVx, accel, dt);
     const vz = THREE.MathUtils.damp(this._vz, targetVz, accel, dt);
     this._vx = vx;

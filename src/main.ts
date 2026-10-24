@@ -9,6 +9,7 @@ import { Character } from './Character';
 import { Animator, renameBonesForTracks } from './Animator';
 import { buildWorld } from './World';
 import { Enemy } from './Enemy';
+import { MobileControls } from './MobileControls';
 
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setSize(window.innerWidth, window.innerHeight);
@@ -26,6 +27,7 @@ const world = buildWorld(scene);
 const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 500);
 
 const input = new Input(renderer.domElement);
+new MobileControls(input);
 
 // ---------- 暗角后期 Shader ----------
 const VignetteShader = {
@@ -114,10 +116,14 @@ function start(model: THREE.Object3D, animator: Animator) {
   const style = document.createElement('style');
   style.textContent = `
     #hp {
-      position: fixed; left: 16px; bottom: 18px; z-index: 10;
+      position: fixed; left: 16px; top: 14px; z-index: 10;
       width: 220px; pointer-events: none;
       font: 12px/1.4 -apple-system, "PingFang SC", sans-serif; color: #fff;
       text-shadow: 0 1px 3px rgba(0,0,0,.6);
+    }
+    @media (pointer: coarse) {
+      #hp { top: auto; bottom: 168px; left: 18px; width: 160px; }
+      #hud { font-size: 11px; max-width: 55vw; }
     }
     #hp .label { margin-bottom: 4px; opacity: .9; }
     #hp .track {
@@ -165,10 +171,24 @@ function start(model: THREE.Object3D, animator: Animator) {
     scene.add(e.group);
     return e;
   });
+  // 前摇危险圈（红色示警）
+  const warnRings = enemies.map(() => {
+    const g = new THREE.RingGeometry(0.2, 1.6, 32);
+    const m = new THREE.MeshBasicMaterial({
+      color: 0xff3333, transparent: true, opacity: 0,
+      side: THREE.DoubleSide, depthWrite: false,
+    });
+    const mesh = new THREE.Mesh(g, m);
+    mesh.rotation.x = -Math.PI / 2;
+    mesh.visible = false;
+    scene.add(mesh);
+    return { mesh, mat: m };
+  });
   let attackHitDone = false;
   const attackRange = 2.6;
   const attackArc = Math.cos(0.85); // 约 ~96° 前向扇形
   const HIT_FRAME = 0.38; // 动作约 38% 处结算（挥到最前）
+  const MAX_STRIKERS = 1; // 同时主攻怪数量，其余环绕 — 避免围殴
 
   const clock = new THREE.Clock();
   let shake = 0;
@@ -229,9 +249,68 @@ function start(model: THREE.Object3D, animator: Animator) {
       attackHitDone = true;
     }
 
-    for (const e of enemies) {
-      const dmg = e.update(dt, time, character.position, character.alive);
+    // 选最近的 1 只允许进入攻击前摇，其余只能追/环绕
+    const living = enemies.filter((e) => e.alive);
+    living.sort((a, b) => {
+      const da = Math.hypot(a.group.position.x - character.position.x, a.group.position.z - character.position.z);
+      const db = Math.hypot(b.group.position.x - character.position.x, b.group.position.z - character.position.z);
+      return da - db;
+    });
+    const strikers = new Set(living.slice(0, MAX_STRIKERS));
+    // 已在 windup/strike/recover 的继续完成，不强制打断
+    for (const e of living) {
+      if (e.phase === 'windup' || e.phase === 'strike' || e.phase === 'recover') strikers.add(e);
+    }
+
+    // 怪间分离
+    const seps = living.map(() => ({ x: 0, z: 0 }));
+    for (let i = 0; i < living.length; i++) {
+      for (let j = i + 1; j < living.length; j++) {
+        const a = living[i];
+        const b = living[j];
+        const dx = a.group.position.x - b.group.position.x;
+        const dz = a.group.position.z - b.group.position.z;
+        const d = Math.hypot(dx, dz);
+        const minD = 1.7;
+        if (d < minD && d > 0.001) {
+          const push = (minD - d) * 4;
+          const nx = dx / d;
+          const nz = dz / d;
+          seps[i].x += nx * push;
+          seps[i].z += nz * push;
+          seps[j].x -= nx * push;
+          seps[j].z -= nz * push;
+        }
+      }
+    }
+
+    for (let i = 0; i < living.length; i++) {
+      const e = living[i];
+      const dmg = e.update(
+        dt,
+        time,
+        character.position,
+        character.alive,
+        strikers.has(e),
+        seps[i],
+      );
       if (dmg > 0 && character.takeHit(dmg)) shake = Math.max(shake, 0.22);
+    }
+
+    // 前摇危险圈：地面红环随风摇放大
+    for (let i = 0; i < enemies.length; i++) {
+      const e = enemies[i];
+      const ring = warnRings[i];
+      if (e.alive && e.phase === 'windup' && e.windupProgress > 0) {
+        ring.mesh.visible = true;
+        ring.mesh.position.set(e.group.position.x, e.group.position.y + 0.08, e.group.position.z);
+        const s = 0.55 + e.windupProgress * 0.9;
+        ring.mesh.scale.set(s, s, s);
+        ring.mat.opacity = 0.25 + e.windupProgress * 0.55;
+      } else {
+        ring.mesh.visible = false;
+        ring.mat.opacity = 0;
+      }
     }
 
     // 弧光跟随角色前向
