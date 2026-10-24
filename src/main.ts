@@ -160,9 +160,11 @@ function start(model: THREE.Object3D, rollPivot: THREE.Object3D, animator: Anima
     blending: THREE.AdditiveBlending,
   });
   const slash = new THREE.Mesh(slashGeo, slashMat);
-  slash.rotation.x = Math.PI / 2;
+  // 挂在角色本地 +Z（面朝）前方，避免世界坐标把弧光拧到侧面
+  slash.position.set(0, 1.05, 1.25);
+  slash.rotation.x = -Math.PI / 2;
   slash.visible = false;
-  scene.add(slash);
+  model.add(slash);
   let slashLife = 0;
 
   // ---------- 怪物 ----------
@@ -288,16 +290,9 @@ function start(model: THREE.Object3D, rollPivot: THREE.Object3D, animator: Anima
       }
     }
 
-    // 弧光跟随角色前向
     if (slashLife > 0) {
       slashLife -= dt;
-      const yaw = character.facing;
-      slash.position.set(
-        character.position.x + Math.sin(yaw) * 1.1,
-        character.position.y + 1.05,
-        character.position.z + Math.cos(yaw) * 1.1,
-      );
-      slash.rotation.z = -yaw;
+      slash.visible = true;
       slashMat.opacity = Math.max(0, slashLife / 0.35) * 0.85;
       if (slashLife <= 0) slash.visible = false;
     }
@@ -338,6 +333,7 @@ function start(model: THREE.Object3D, rollPivot: THREE.Object3D, animator: Anima
       else look.set(0, 0, 1);
       const right = new THREE.Vector3().crossVectors(new THREE.Vector3(0, 1, 0), look).normalize();
       g.ready = true;
+      const nose = new THREE.Vector3(0, 1.2, 0.8).applyMatrix4(model.matrixWorld);
       g.player = {
         x: character.position.x,
         y: character.position.y,
@@ -348,12 +344,18 @@ function start(model: THREE.Object3D, rollPivot: THREE.Object3D, animator: Anima
         alive: character.alive,
         isAttacking: character.isAttacking,
         isRolling: character.isRolling,
+        nose: { x: nose.x, z: nose.z },
       };
+      const ce = camera.matrixWorld.elements;
       g.camera = {
         yaw: input.yaw,
         pitch: input.pitch,
+        // 屏幕右 = 相机矩阵 X 列（与移动代码同一来源，测试另用几何复核）
         forward: { x: look.x, z: look.z },
         right: { x: right.x, z: right.z },
+        px: camera.position.x,
+        pz: camera.position.z,
+        matrixRight: { x: ce[0], z: ce[2] },
       };
       g.enemiesAlive = enemies.filter((e) => e.alive).length;
     }

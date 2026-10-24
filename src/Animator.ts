@@ -52,6 +52,8 @@ export class Animator {
     for (const clip of clips) {
       const name = clip.name as AnimName;
       if (['idle', 'walk', 'run', 'jump', 'attack'].includes(name)) {
+        // root 轨会把骨架整体拧离控制器朝向，攻击看起来朝向和人相反
+        clip.tracks = clip.tracks.filter((t) => !t.name.startsWith('root.'));
         const action = this.mixer.clipAction(clip);
         action.setLoop(THREE.LoopRepeat, Infinity);
         action.clampWhenFinished = false;
@@ -119,34 +121,15 @@ export class Animator {
   }
 
   playRoll() {
+    // 翻滚视觉只靠 rollPivot 前空翻，不再播 jump/run（叠在一起会拧成诡异姿势）
     this.rolling = true;
-    if (this.actions.has('roll')) {
-      this.play('roll', 0.04);
-    } else {
-      this.play('jump', 0.04);
-      const j = this.actions.get('jump');
-      if (j) j.timeScale = 1.8;
-    }
-    const run = this.actions.get('run');
-    if (run) {
-      run.reset();
-      run.setEffectiveWeight(0.4);
-      run.setEffectiveTimeScale(2);
-      run.fadeIn(0.04).play();
-    }
+    const cur = this.current ? this.actions.get(this.current) : null;
+    if (cur) cur.fadeOut(0.08);
+    this.current = 'roll';
   }
 
   endRoll() {
     this.rolling = false;
-    const run = this.actions.get('run');
-    if (run) {
-      run.fadeOut(0.1);
-      run.setEffectiveTimeScale(1);
-    }
-    const jump = this.actions.get('jump');
-    if (jump) jump.timeScale = 1;
-    const roll = this.actions.get('roll');
-    if (roll) roll.fadeOut(0.08);
     this.current = null;
   }
 

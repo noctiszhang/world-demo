@@ -132,9 +132,11 @@ export class Character {
     if (this.isRolling) {
       this.rollT -= dt;
       const p = 1 - Math.max(0, this.rollT) / ROLL_DUR;
-      // 绕骨盆高度翻，并 hop 离地，避免滚进地里
-      this.rollPivot.position.y = 0.85;
+      // 绕角色右轴前翻一圈（局部 X），抬离地面。不再叠 jump 片段，避免肢体乱拧。
+      this.rollPivot.position.y = 0.9;
       this.rollPivot.rotation.x = p * Math.PI * 2;
+      this.rollPivot.rotation.y = 0;
+      this.rollPivot.rotation.z = 0;
       this._vx = this.rollDir.x * ROLL_SPEED;
       this._vz = this.rollDir.y * ROLL_SPEED;
       this.speed = ROLL_SPEED;
@@ -260,11 +262,12 @@ export class Character {
   }
 
   private computeCamBasis(camera: THREE.Camera) {
+    // lookAt 相机的局部 +X 在画面上是左边，不能拿来当「屏幕右」。
+    // 视线水平分量 × 世界上方向的反过来：up × look = 屏幕右。
     camera.getWorldDirection(_fwd);
     _fwd.y = 0;
     if (_fwd.lengthSq() < 1e-8) _fwd.set(0, 0, 1);
     else _fwd.normalize();
-    // 屏幕右 = up × look
     _right.crossVectors(_up, _fwd);
     if (_right.lengthSq() < 1e-8) _right.set(1, 0, 0);
     else _right.normalize();
