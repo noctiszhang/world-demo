@@ -3,11 +3,26 @@
 浏览器可玩的第三人称动作 demo，模仿《魔兽世界》操作。
 技术栈：Vite + TypeScript + Three.js（原生，无 React）；手写重力/碰撞，无物理引擎。
 
+## 体验入口（优先用这个）
+
+云端可玩地址（本 Agent 会话内有效）：
+
+**https://candidates-mariah-diffs-bring.trycloudflare.com/**
+
+Cursor 本机端口转发（Agents 窗口右上角插头图标）：
+
+**http://localhost:4173/**
+
+后续测试 / 优化默认基于上述入口验证；改代码后在 Agent 里重新 `npm run build && npm run preview:public` 即可刷新。
+
+稳定公网（可选）：合并部署 workflow 后，在仓库 Settings → Pages 选择 **GitHub Actions**。私有仓库需 GitHub Pro，或把仓库改为 Public。预计地址：`https://noctiszhang.github.io/world-demo/`
+
 ## 运行
 
 ```bash
 npm install
-npm run dev      # 默认 5173
+npm run dev              # 开发热更新，默认 5173
+npm run build && npm run preview:public   # 生产预览，0.0.0.0:4173
 ```
 
 打开页面后点击画布即可操作。
@@ -46,6 +61,6 @@ npm run dev      # 默认 5173
 - 攻击在动作"命中帧"结算（目前在动作前段一次性判定）
 - 相机：防穿更平滑、可选碰撞遮挡半透
 - 任务/HUD、背包、小地图、存档
-- 部署：`npm run build` 为纯静态，可直接上 Cloudflare Pages / Vercel
+- 部署：`npm run build` 为纯静态；仓库已带 GitHub Pages workflow（`.github/workflows/deploy-pages.yml`）
 
 详见 `CONTINUITY.md`。

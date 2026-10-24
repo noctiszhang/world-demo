@@ -2,7 +2,11 @@
 
 ## 当前状态（2026-10-24）
 
-可玩版本地跑通：http://127.0.0.1:5180/（`npx vite --port 5180`）
+可玩体验入口（后续测试/优化默认从这里验证）：
+- 公网隧道：https://candidates-mariah-diffs-bring.trycloudflare.com/ （随本 Cloud Agent 会话；重启后需重建隧道）
+- Cursor 端口转发：http://localhost:4173/ （`npm run preview:public`）
+- 稳定 Pages（待启用 Actions）：https://noctiszhang.github.io/world-demo/
+
 技术栈：Vite 6 + TypeScript 5.7 + Three.js 0.180（原生，无 React/R3F）
 物理：手写重力、地面高度、圆柱碰撞；未引入 Rapier/Cannon
 验证：tsc 类型检查通过；vite build 生产构建通过；移动/转身/跳跃逻辑用假输入跑帧验证
