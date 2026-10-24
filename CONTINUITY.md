@@ -5,7 +5,9 @@
 可玩体验入口（后续测试/优化默认从这里验证；公网过期则重建隧道）：
 - Cursor 端口转发：http://localhost:4173/ （`npm run preview:public`）
 - 稳定 Pages（待启用 Actions）：https://noctiszhang.github.io/world-demo/
-- 流程约定：每次更新开/更 PR + 推公网链接；由体验方决定是否合并 main
+- **门禁**：每次迭代先 `npm run verify`（build+smoke）全绿，才开公网/请用户测
+- 技能库原文：`skills/browser-game-iteration-qa/SKILL.md`
+- 流程约定：verify → PR + 公网链接；由体验方决定是否合并 main
 
 技术栈：Vite 6 + TypeScript 5.7 + Three.js 0.180（原生，无 React/R3F）
 物理：手写重力、地面高度、圆柱碰撞；未引入 Rapier/Cannon

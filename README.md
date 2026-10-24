@@ -23,6 +23,7 @@ Cursor 本机端口转发（Agents 窗口右上角插头图标）：
 npm install
 npm run dev              # 开发热更新，默认 5173
 npm run build && npm run preview:public   # 生产预览，0.0.0.0:4173
+npm run test:smoke       # Playwright 基础回归（移动/攻击朝向/翻滚不入地）
 ```
 
 打开页面后点击画布即可操作。
