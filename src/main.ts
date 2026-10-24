@@ -323,16 +323,7 @@ function start(model: THREE.Object3D, rollPivot: THREE.Object3D, animator: Anima
     hpFill.style.width = `${(character.health / character.maxHealth) * 100}%`;
     if (!character.alive) deadEl.style.display = 'grid';
 
-    // 塞尔达：镜头由玩家拖动；仅极弱跟随避免完全丢失角色
-    {
-      const desiredYaw = character.facing + Math.PI;
-      let diff = desiredYaw - input.yaw;
-      diff = Math.atan2(Math.sin(diff), Math.cos(diff));
-      if (character.speed > 1.2 && !character.isRolling) {
-        input.yaw += diff * Math.min(1, dt * 1.1);
-      }
-    }
-
+    // 塞尔达：镜头只跟拖动，走路时绝不自动回正（自动跟随会和「镜头相对 WASD」打架发飘）
     const target = character.position.clone();
     target.y += 1.5;
 

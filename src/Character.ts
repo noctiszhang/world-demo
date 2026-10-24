@@ -180,29 +180,34 @@ export class Character {
       move.z = (fZ * mf + rZ * ms) * inv;
     }
 
-    // 朝向：有移动跟速度；攻击锁定 faceTowards；镜头拖动不转身
+    // 朝向：有输入立刻朝移动方向（别拖泥带水）；攻击锁定 faceTowards
     if (this._desiredYaw !== null) {
       let d = this._desiredYaw - this.object.rotation.y;
       d = Math.atan2(Math.sin(d), Math.cos(d));
-      this.object.rotation.y += d * Math.min(1, dt * 14);
+      this.object.rotation.y += d * Math.min(1, dt * 16);
       if (Math.abs(d) < 0.02) {
         this.object.rotation.y = this._desiredYaw;
         this._desiredYaw = null;
       }
-    } else if (moveMag > 0.2 && !this.isAttacking) {
+    } else if (moveMag > 0.15 && !this.isAttacking) {
       const targetYaw = Math.atan2(move.x, move.z);
       let d = targetYaw - this.object.rotation.y;
       d = Math.atan2(Math.sin(d), Math.cos(d));
-      this.object.rotation.y += d * Math.min(1, dt * 12);
+      // 键盘点按时几乎瞬转，避免「先侧身再走」的怪异感
+      this.object.rotation.y += d * Math.min(1, dt * 22);
+      if (Math.abs(d) < 0.08) this.object.rotation.y = targetYaw;
     }
-    // 消费镜头增量但不转身（仅清零，避免堆积）
     input.rightYawDelta = 0;
     this.facing = this.object.rotation.y;
 
-    let maxSpeed = 4.5 * Math.min(1, moveMag || 1);
-    if (input.sprint && moveMag > 0.55) maxSpeed = 8.5;
+    // 数字键 WASD 用满速；摇杆才按幅度缩放
+    const analog = Math.abs(input.stickForward) > 0.01 || Math.abs(input.stickStrafe) > 0.01;
+    const speedScale = analog ? Math.min(1, moveMag) : (moveMag > 0.01 ? 1 : 0);
+    let maxSpeed = 4.5 * speedScale;
+    if (input.sprint && moveMag > 0.35) maxSpeed = 8.5 * (analog ? Math.min(1, moveMag) : 1);
     if (this.isAttacking) maxSpeed *= 0.45;
-    const accel = this.grounded ? 14 : 5;
+    // 比之前略跟手，减少「滑、钝」
+    const accel = this.grounded ? 18 : 6;
 
     const targetVx = move.x * maxSpeed;
     const targetVz = move.z * maxSpeed;
