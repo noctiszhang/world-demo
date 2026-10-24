@@ -334,6 +334,12 @@ function start(model: THREE.Object3D, rollPivot: THREE.Object3D, animator: Anima
       const right = new THREE.Vector3().crossVectors(new THREE.Vector3(0, 1, 0), look).normalize();
       g.ready = true;
       const nose = new THREE.Vector3(0, 1.2, 0.8).applyMatrix4(model.matrixWorld);
+      const ndc = character.position.clone();
+      ndc.y += 1.2;
+      ndc.project(camera);
+      const marker = new THREE.Vector3(0, 2, 0);
+      marker.project(camera);
+      g.markerScreenX = marker.x;
       g.player = {
         x: character.position.x,
         y: character.position.y,
@@ -345,6 +351,8 @@ function start(model: THREE.Object3D, rollPivot: THREE.Object3D, animator: Anima
         isAttacking: character.isAttacking,
         isRolling: character.isRolling,
         nose: { x: nose.x, z: nose.z },
+        screenX: ndc.x,
+        screenY: ndc.y,
       };
       const ce = camera.matrixWorld.elements;
       g.camera = {

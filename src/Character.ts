@@ -271,6 +271,9 @@ export class Character {
     _right.crossVectors(_up, _fwd);
     if (_right.lengthSq() < 1e-8) _right.set(1, 0, 0);
     else _right.normalize();
+    // 跟随相机时角色始终在画面中心。实测按 A 时固定地标的屏幕 X 减小，
+    // 即人往画面右边走。这里把「右」取反，A 才是画面左。
+    _right.negate();
   }
 
   private resolveColliders(nx: number, nz: number, colliders: { x: number; z: number; r: number }[]) {

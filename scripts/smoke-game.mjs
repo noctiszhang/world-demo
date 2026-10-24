@@ -50,51 +50,24 @@ async function main() {
     assert(forwardAmt > 0.25, `W 应主要向前 (fwd=${forwardAmt.toFixed(3)}, moved=${moved.toFixed(3)})`);
   }
 
-  // 屏幕轴不读游戏的 right（那套曾经写反还自测通过）。
-  // 视线 = 玩家脚下 - 相机；屏幕右 = 视线在俯视下顺时针 90°。
-  async function screenAxes() {
-    return page.evaluate(() => {
-      const p = window.__GAME__.player;
-      const c = window.__GAME__.camera;
-      let lx = p.x - c.px;
-      let lz = p.z - c.pz;
-      const len = Math.hypot(lx, lz) || 1;
-      lx /= len;
-      lz /= len;
-      return { fX: lx, fZ: lz, rX: lz, rZ: -lx };
-    });
-  }
-
+  // 角色被镜头跟在画面中心，不能看角色自己的 NDC。
+  // 固定世界点 (0,2,0) 的屏幕 X：人往左走时地标往右挪（markerScreenX 变大）。
   await page.keyboard.up('KeyW');
   await page.waitForTimeout(150);
 
-  const a0 = await page.evaluate(() => ({ x: window.__GAME__.player.x, z: window.__GAME__.player.z }));
-  const ax = await screenAxes();
+  const aMark0 = await page.evaluate(() => window.__GAME__.markerScreenX);
   await page.keyboard.down('KeyA');
   await page.waitForTimeout(700);
   await page.keyboard.up('KeyA');
-  const a1 = await page.evaluate(() => ({ x: window.__GAME__.player.x, z: window.__GAME__.player.z }));
-  {
-    const dx = a1.x - a0.x;
-    const dz = a1.z - a0.z;
-    const rightAmt = dx * ax.rX + dz * ax.rZ;
-    assert(Math.hypot(dx, dz) > 0.25, `A 应有位移 (got ${Math.hypot(dx, dz).toFixed(3)})`);
-    assert(rightAmt < -0.2, `A 必须往屏幕左 (right=${rightAmt.toFixed(3)})`);
-  }
+  const aMark1 = await page.evaluate(() => window.__GAME__.markerScreenX);
+  assert(aMark1 - aMark0 > 0.05, `A 必须往画面左（地标应右移 Δ=${(aMark1 - aMark0).toFixed(3)}）`);
 
-  const d0 = await page.evaluate(() => ({ x: window.__GAME__.player.x, z: window.__GAME__.player.z }));
-  const dxs = await screenAxes();
+  const dMark0 = await page.evaluate(() => window.__GAME__.markerScreenX);
   await page.keyboard.down('KeyD');
   await page.waitForTimeout(700);
   await page.keyboard.up('KeyD');
-  const d1 = await page.evaluate(() => ({ x: window.__GAME__.player.x, z: window.__GAME__.player.z }));
-  {
-    const dx = d1.x - d0.x;
-    const dz = d1.z - d0.z;
-    const rightAmt = dx * dxs.rX + dz * dxs.rZ;
-    assert(Math.hypot(dx, dz) > 0.25, `D 应有位移 (got ${Math.hypot(dx, dz).toFixed(3)})`);
-    assert(rightAmt > 0.2, `D 必须往屏幕右 (right=${rightAmt.toFixed(3)})`);
-  }
+  const dMark1 = await page.evaluate(() => window.__GAME__.markerScreenX);
+  assert(dMark1 - dMark0 < -0.05, `D 必须往画面右（地标应左移 Δ=${(dMark1 - dMark0).toFixed(3)}）`);
 
   // --- 3) 攻击朝向 = 面朝（允许极小数值误差）---
   await page.keyboard.up('KeyW');
