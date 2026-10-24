@@ -34,13 +34,14 @@ export class Enemy {
   // 可风筝参数：玩家步行 4.5 / 奔跑 8.5，怪追击更慢
   private readonly aggroRange = 9;
   private readonly leashRange = 16;
-  private readonly attackRange = 1.55;
-  private readonly moveSpeed = 2.05;
-  private readonly windupDur = 0.55;   // ~反应时间+缓冲，可侧移躲开
-  private readonly strikeDur = 0.12;   // 短命中窗
-  private readonly recoverDur = 0.7;   // 还击空隙
-  private readonly attackDamage = 14;
-  private readonly preferDist = 2.2;   // 非主攻者保持距离环绕
+  private readonly attackRange = 1.5;
+  private readonly moveSpeed = 1.85;
+  private readonly windupDur = 0.72;   // 反应+侧移缓冲，红圈出现后可跑开
+  private readonly strikeDur = 0.1;    // 短命中窗
+  private readonly recoverDur = 0.85;  // 还击/逃跑空隙
+  private readonly attackDamage = 12;
+  private readonly preferDist = 2.4;   // 非主攻者保持距离环绕
+  private readonly windupCommitRange = 2.15; // 前摇中离开此距离 → 落空
 
   constructor(cfg: EnemyConfig) {
     this.heightAt = cfg.heightAt;
@@ -175,7 +176,14 @@ export class Enemy {
         this.group.rotation.y = Math.atan2(this.lockedDir.x, this.lockedDir.y);
         // 前摇站桩，玩家可侧移/后撤躲开
         if (body) body.scale.set(1 + this.windupProgress * 0.25, 0.85, 1 + this.windupProgress * 0.15);
-        if (this.phaseT <= 0) {
+        // 前摇中跑出承诺距离 → 直接落空进入后摇（可操作防御的核心）
+        if (dist > this.windupCommitRange) {
+          this.phase = 'recover';
+          this.phaseT = this.recoverDur * 0.65;
+          this.windupProgress = 0;
+          this.attackCd = 0.55;
+          if (body) body.scale.set(1, 0.85, 1);
+        } else if (this.phaseT <= 0) {
           this.phase = 'strike';
           this.phaseT = this.strikeDur;
           this.windupProgress = 1;
@@ -183,21 +191,21 @@ export class Enemy {
       } else if (this.phase === 'strike') {
         this.phaseT -= dt;
         this.group.rotation.y = Math.atan2(this.lockedDir.x, this.lockedDir.y);
-        // 仅短窗结算一次
+        // 仅短窗结算一次；距离与朝向都要满足
         if (this.phaseT > this.strikeDur - dt * 1.5) {
           const sdx = playerPos.x - this.group.position.x;
           const sdz = playerPos.z - this.group.position.z;
           const sd = Math.hypot(sdx, sdz);
-          if (sd < this.attackRange + 0.35 && sd > 0.001) {
+          if (sd < this.attackRange + 0.12 && sd > 0.001) {
             const dot = (sdx / sd) * this.lockedDir.x + (sdz / sd) * this.lockedDir.y;
-            if (dot > 0.35) dealt = this.attackDamage;
+            if (dot > 0.55) dealt = this.attackDamage;
           }
         }
         if (this.phaseT <= 0) {
           this.phase = 'recover';
           this.phaseT = this.recoverDur;
           this.windupProgress = 0;
-          this.attackCd = 0.9;
+          this.attackCd = 1.05;
           if (body) body.scale.set(1, 0.85, 1);
         }
       } else if (this.phase === 'recover') {
