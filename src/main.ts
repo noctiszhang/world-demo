@@ -56,7 +56,7 @@ const VignetteShader = {
 
 const loader = new GLTFLoader();
 loader.load(
-  '/character.glb',
+  `${import.meta.env.BASE_URL}character.glb`,
   (gltf) => {
     const model = gltf.scene;
 

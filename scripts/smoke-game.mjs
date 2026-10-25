@@ -20,6 +20,21 @@ async function waitGame(page) {
   });
 }
 
+/** CI 上单帧会被夹到 0.05s，固定按键时长不够走远。按住直到条件成立。 */
+async function holdUntil(page, key, ready, timeoutMs = 5000) {
+  await page.keyboard.down(key);
+  const start = Date.now();
+  let last = null;
+  while (Date.now() - start < timeoutMs) {
+    await page.waitForTimeout(120);
+    last = await page.evaluate(ready);
+    if (last?.ok) break;
+  }
+  await page.keyboard.up(key);
+  await page.waitForTimeout(40);
+  return last;
+}
+
 async function main() {
   console.log('smoke →', BASE);
   const browser = await chromium.launch({ headless: true });
@@ -34,12 +49,21 @@ async function main() {
 
   // --- 1) 仅 W：应沿相机前方有明显位移 ---
   await page.locator('canvas').click({ position: { x: 640, y: 360 } });
-  const before = await page.evaluate(() => ({ ...window.__GAME__.player, yaw: window.__GAME__.camera.yaw }));
-  await page.keyboard.down('KeyW');
-  await page.waitForTimeout(900);
-  await page.keyboard.up('KeyW');
-  await page.waitForTimeout(50);
-  const afterW = await page.evaluate(() => ({ ...window.__GAME__.player, yaw: window.__GAME__.camera.yaw }));
+  const before = await page.evaluate(() => {
+    const p = window.__GAME__.player;
+    window.__W0 = { x: p.x, z: p.z };
+    return { x: p.x, z: p.z };
+  });
+  const afterW = await holdUntil(page, 'KeyW', () => {
+    const p = window.__GAME__.player;
+    const dx = p.x - window.__W0.x;
+    const dz = p.z - window.__W0.z;
+    const moved = Math.hypot(dx, dz);
+    const c = window.__GAME__.camera;
+    const fwd = dx * c.forward.x + dz * c.forward.z;
+    return { ok: moved > 0.45 && fwd > 0.35, x: p.x, z: p.z, moved, fwd };
+  });
+  await page.evaluate(() => { delete window.__W0; });
   {
     const dx = afterW.x - before.x;
     const dz = afterW.z - before.z;
@@ -55,19 +79,23 @@ async function main() {
   await page.keyboard.up('KeyW');
   await page.waitForTimeout(150);
 
-  const aMark0 = await page.evaluate(() => window.__GAME__.markerScreenX);
-  await page.keyboard.down('KeyA');
-  await page.waitForTimeout(700);
-  await page.keyboard.up('KeyA');
-  const aMark1 = await page.evaluate(() => window.__GAME__.markerScreenX);
-  assert(aMark1 - aMark0 > 0.05, `A 必须往画面左（地标应右移 Δ=${(aMark1 - aMark0).toFixed(3)}）`);
+  await page.evaluate(() => {
+    window.__M0 = window.__GAME__.markerScreenX;
+  });
+  const aHeld = await holdUntil(page, 'KeyA', () => {
+    const d = window.__GAME__.markerScreenX - window.__M0;
+    return { ok: d > 0.08, d, mark: window.__GAME__.markerScreenX };
+  });
+  assert(aHeld.d > 0.05, `A 必须往画面左（地标应右移 Δ=${aHeld.d.toFixed(3)}）`);
 
-  const dMark0 = await page.evaluate(() => window.__GAME__.markerScreenX);
-  await page.keyboard.down('KeyD');
-  await page.waitForTimeout(700);
-  await page.keyboard.up('KeyD');
-  const dMark1 = await page.evaluate(() => window.__GAME__.markerScreenX);
-  assert(dMark1 - dMark0 < -0.05, `D 必须往画面右（地标应左移 Δ=${(dMark1 - dMark0).toFixed(3)}）`);
+  await page.evaluate(() => {
+    window.__M0 = window.__GAME__.markerScreenX;
+  });
+  const dHeld = await holdUntil(page, 'KeyD', () => {
+    const d = window.__GAME__.markerScreenX - window.__M0;
+    return { ok: d < -0.08, d, mark: window.__GAME__.markerScreenX };
+  });
+  assert(dHeld.d < -0.05, `D 必须往画面右（地标应左移 Δ=${dHeld.d.toFixed(3)}）`);
 
   // 镜头转开后再按 A。地标屏幕 X 变大 = 人往画面左，不依赖游戏自己的 right 向量。
   await page.mouse.move(700, 360);
@@ -75,14 +103,16 @@ async function main() {
   await page.mouse.move(380, 360, { steps: 10 });
   await page.mouse.up();
   await page.waitForTimeout(80);
-  const yawTurned = await page.evaluate(() => window.__GAME__.camera.yaw);
-  const a2m0 = await page.evaluate(() => window.__GAME__.markerScreenX);
-  await page.keyboard.down('KeyA');
-  await page.waitForTimeout(600);
-  await page.keyboard.up('KeyA');
-  const a2m1 = await page.evaluate(() => window.__GAME__.markerScreenX);
+  const yawTurned = await page.evaluate(() => {
+    window.__M0 = window.__GAME__.markerScreenX;
+    return window.__GAME__.camera.yaw;
+  });
+  const a2Held = await holdUntil(page, 'KeyA', () => {
+    const d = window.__GAME__.markerScreenX - window.__M0;
+    return { ok: d > 0.08, d };
+  });
   assert(Math.abs(yawTurned - Math.PI) > 0.7, `鼠标应把镜头转开 (yaw=${yawTurned.toFixed(2)})`);
-  assert(a2m1 - a2m0 > 0.04, `转镜头后 A 仍必须往画面左（地标应右移 Δ=${(a2m1 - a2m0).toFixed(3)}）`);
+  assert(a2Held.d > 0.04, `转镜头后 A 仍必须往画面左（地标应右移 Δ=${a2Held.d.toFixed(3)}）`);
 
   // --- 3) 攻击朝向 = 面朝，闪光在身前而不是身侧 ---
   await page.keyboard.up('KeyW');
